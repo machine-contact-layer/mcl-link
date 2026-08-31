@@ -34,6 +34,24 @@ static uint32_t mcl_link_random(void)
     return x;
 }
 
+static void test_wire_major_mask_helper(void)
+{
+    CHECK_TRUE(mcl_link_wire_major_mask(0u) == 0x0001u);
+    CHECK_TRUE(mcl_link_wire_major_mask(1u) == 0x0002u);
+    CHECK_TRUE(mcl_link_wire_major_mask(15u) == 0x8000u);
+    CHECK_TRUE(mcl_link_wire_major_mask(16u) == 0u);
+    CHECK_TRUE(mcl_link_wire_major_mask(17u) == 0u);
+    CHECK_TRUE(mcl_link_wire_major_mask(255u) == 0u);
+
+    /* Macro form behaves identically without aliasing */
+    CHECK_TRUE(MCL_LINK_WIRE_MAJOR_MASK(0) == 0x0001u);
+    CHECK_TRUE(MCL_LINK_WIRE_MAJOR_MASK(1) == 0x0002u);
+    CHECK_TRUE(MCL_LINK_WIRE_MAJOR_MASK(15) == 0x8000u);
+    CHECK_TRUE(MCL_LINK_WIRE_MAJOR_MASK(16) == 0u);
+    CHECK_TRUE(MCL_LINK_WIRE_MAJOR_MASK(17) == 0u);
+    CHECK_TRUE(MCL_LINK_WIRE_MAJOR_MASK(255) == 0u);
+}
+
 static void test_initialization_and_null_checks(void)
 {
     mcl_link_t link;
@@ -125,6 +143,107 @@ static void test_context_storage_and_bounds(void)
     CHECK_STATUS(mcl_link_reset(&link), MCL_LINK_OK);
     key.wire_major = 0u;
     CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_ERR_NO_ACTIVE_CONTEXT);
+}
+
+static void test_public_key_equals_hardening(void)
+{
+    mcl_link_context_key_t valid1;
+    mcl_link_context_key_t valid2;
+    mcl_link_context_key_t invalid_size33;
+    mcl_link_context_key_t invalid_size255;
+    mcl_link_context_key_t invalid_size0;
+    size_t i;
+
+    memset(&valid1, 0, sizeof(valid1));
+    valid1.wire_major = 0u;
+    valid1.context_id = 123u;
+    valid1.generation = 4u;
+    valid1.ruleset_digest_size = 16u;
+    for (i = 0u; i < 16u; ++i) {
+        valid1.ruleset_digest[i] = (uint8_t)i;
+    }
+    valid2 = valid1;
+
+    CHECK_TRUE(mcl_link_context_key_equals(&valid1, &valid2) == 1u);
+    CHECK_TRUE(mcl_link_context_key_equals(&valid1, NULL) == 0u);
+    CHECK_TRUE(mcl_link_context_key_equals(NULL, &valid2) == 0u);
+
+    invalid_size33 = valid1;
+    invalid_size33.ruleset_digest_size = 33u;
+    CHECK_TRUE(mcl_link_context_key_equals(&valid1, &invalid_size33) == 0u);
+    CHECK_TRUE(mcl_link_context_key_equals(&invalid_size33, &valid1) == 0u);
+    CHECK_TRUE(mcl_link_context_key_equals(&invalid_size33, &invalid_size33) == 0u);
+
+    invalid_size255 = valid1;
+    invalid_size255.ruleset_digest_size = 255u;
+    CHECK_TRUE(mcl_link_context_key_equals(&valid1, &invalid_size255) == 0u);
+    CHECK_TRUE(mcl_link_context_key_equals(&invalid_size255, &valid1) == 0u);
+    CHECK_TRUE(mcl_link_context_key_equals(&invalid_size255, &invalid_size255) == 0u);
+
+    invalid_size0 = valid1;
+    invalid_size0.ruleset_digest_size = 0u;
+    CHECK_TRUE(mcl_link_context_key_equals(&valid1, &invalid_size0) == 0u);
+    CHECK_TRUE(mcl_link_context_key_equals(&invalid_size0, &valid1) == 0u);
+}
+
+static void test_context_lifetime_on_transitions(void)
+{
+    mcl_link_t link;
+    mcl_link_context_key_t key;
+    uint8_t has_context = 0u;
+
+    memset(&key, 0, sizeof(key));
+    key.wire_major = 0u;
+    key.context_id = 777u;
+    key.generation = 1u;
+    key.ruleset_digest_size = 4u;
+    key.ruleset_digest[0] = 0xAAu;
+
+    /* 1. ESTABLISHED -> IDLE clears context */
+    CHECK_STATUS(mcl_link_init(&link, MCL_LINK_WIRE_MAJOR_MASK(0)), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_DISCOVERED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_CAPABILITIES), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_NEGOTIATING), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_ESTABLISHED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_install_context(&link, &key), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_OK);
+
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_IDLE), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_ERR_NO_ACTIVE_CONTEXT);
+    CHECK_STATUS(mcl_link_has_active_context(&link, &has_context), MCL_LINK_OK);
+    CHECK_TRUE(has_context == 0u);
+
+    /* 2. ESTABLISHED -> CLOSED clears context */
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_DISCOVERED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_CAPABILITIES), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_NEGOTIATING), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_ESTABLISHED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_install_context(&link, &key), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_OK);
+
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_CLOSED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_ERR_NO_ACTIVE_CONTEXT);
+    CHECK_STATUS(mcl_link_has_active_context(&link, &has_context), MCL_LINK_OK);
+    CHECK_TRUE(has_context == 0u);
+
+    /* 3. FALLBACK -> DISCOVERED clears context */
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_IDLE), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_DISCOVERED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_CAPABILITIES), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_NEGOTIATING), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_ESTABLISHED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_install_context(&link, &key), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_OK);
+
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_FALLBACK), MCL_LINK_OK);
+    /* Context remains during active fallback recovery attempt */
+    CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_OK);
+
+    /* But transitioning fallback to pre-session DISCOVERED invalidates the context */
+    CHECK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_DISCOVERED), MCL_LINK_OK);
+    CHECK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_ERR_NO_ACTIVE_CONTEXT);
+    CHECK_STATUS(mcl_link_has_active_context(&link, &has_context), MCL_LINK_OK);
+    CHECK_TRUE(has_context == 0u);
 }
 
 static void test_state_machine_matrix(void)
@@ -240,8 +359,11 @@ static void test_randomized_context_trials(void)
 
 int main(void)
 {
+    test_wire_major_mask_helper();
     test_initialization_and_null_checks();
     test_context_storage_and_bounds();
+    test_public_key_equals_hardening();
+    test_context_lifetime_on_transitions();
     test_state_machine_matrix();
     test_randomized_context_trials();
 

@@ -15,6 +15,14 @@ static void mcl_link_zero_context(mcl_link_context_key_t *key)
     }
 }
 
+static void mcl_link_clear_context(mcl_link_t *link)
+{
+    if (link != NULL) {
+        link->context_valid = 0u;
+        mcl_link_zero_context(&link->active_context);
+    }
+}
+
 mcl_link_status_t mcl_link_init(
     mcl_link_t *link,
     uint16_t supported_wire_majors_mask)
@@ -38,8 +46,7 @@ mcl_link_status_t mcl_link_reset(mcl_link_t *link)
     }
 
     link->state = MCL_LINK_STATE_IDLE;
-    link->context_valid = 0u;
-    mcl_link_zero_context(&link->active_context);
+    mcl_link_clear_context(link);
 
     return MCL_LINK_OK;
 }
@@ -51,6 +58,14 @@ uint8_t mcl_link_context_key_equals(
     size_t i;
 
     if (a == NULL || b == NULL) {
+        return 0u;
+    }
+
+    /* Validate bounds on digest sizes for arbitrary caller structs */
+    if (a->ruleset_digest_size == 0u ||
+        a->ruleset_digest_size > MCL_LINK_RULESET_DIGEST_MAX_SIZE ||
+        b->ruleset_digest_size == 0u ||
+        b->ruleset_digest_size > MCL_LINK_RULESET_DIGEST_MAX_SIZE) {
         return 0u;
     }
 
@@ -141,6 +156,9 @@ mcl_link_status_t mcl_link_transition(
         if (next_state == MCL_LINK_STATE_DISCOVERED ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -150,6 +168,9 @@ mcl_link_status_t mcl_link_transition(
             next_state == MCL_LINK_STATE_IDLE ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_IDLE || next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -159,6 +180,9 @@ mcl_link_status_t mcl_link_transition(
             next_state == MCL_LINK_STATE_IDLE ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_IDLE || next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -168,6 +192,9 @@ mcl_link_status_t mcl_link_transition(
             next_state == MCL_LINK_STATE_IDLE ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_IDLE || next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -179,6 +206,9 @@ mcl_link_status_t mcl_link_transition(
             next_state == MCL_LINK_STATE_IDLE ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_IDLE || next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -190,6 +220,9 @@ mcl_link_status_t mcl_link_transition(
             next_state == MCL_LINK_STATE_IDLE ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_IDLE || next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -199,6 +232,9 @@ mcl_link_status_t mcl_link_transition(
             next_state == MCL_LINK_STATE_IDLE ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_IDLE || next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -209,6 +245,11 @@ mcl_link_status_t mcl_link_transition(
             next_state == MCL_LINK_STATE_IDLE ||
             next_state == MCL_LINK_STATE_CLOSED) {
             link->state = next_state;
+            if (next_state == MCL_LINK_STATE_DISCOVERED ||
+                next_state == MCL_LINK_STATE_IDLE ||
+                next_state == MCL_LINK_STATE_CLOSED) {
+                mcl_link_clear_context(link);
+            }
             return MCL_LINK_OK;
         }
         break;
@@ -216,6 +257,7 @@ mcl_link_status_t mcl_link_transition(
     case MCL_LINK_STATE_CLOSED:
         if (next_state == MCL_LINK_STATE_IDLE) {
             link->state = next_state;
+            mcl_link_clear_context(link);
             return MCL_LINK_OK;
         }
         break;
