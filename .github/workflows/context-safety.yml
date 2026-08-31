@@ -1,0 +1,27 @@
+name: Context safety
+
+on:
+  push:
+    paths:
+      - "research/context/**"
+      - "spec/version-context-negotiation-v0.1.md"
+      - ".github/workflows/context-safety.yml"
+  pull_request:
+    paths:
+      - "research/context/**"
+      - "spec/version-context-negotiation-v0.1.md"
+      - ".github/workflows/context-safety.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: research/context
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Reject stale, mismatched, and incompatible context
+        run: python test_context_negotiation.py
