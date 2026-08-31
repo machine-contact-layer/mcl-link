@@ -1,0 +1,24 @@
+{
+  "registry_version": "0.1-draft",
+  "status": "provisional",
+  "field_width_bits": 8,
+  "allocation_policy": {
+    "0x00": "Reserved / no binding selected",
+    "0x01_0x7F": "MCL Standards Action",
+    "0x80_0xBF": "Specification Required",
+    "0xC0_0xDF": "Experimental Use",
+    "0xE0_0xFE": "Private Use",
+    "0xFF": "Extended transport identifier escape"
+  },
+  "assignments": [
+    {"id": 1, "name": "MCL_AP", "status": "provisional", "owner_repo": "mcl-ap"},
+    {"id": 2, "name": "MCL_IP", "status": "provisional", "owner_repo": "mcl-ip"},
+    {"id": 3, "name": "MCL_BLE", "status": "provisional", "owner_repo": "mcl-ble"},
+    {"id": 4, "name": "MCL_UWB", "status": "provisional", "owner_repo": "mcl-uwb"}
+  ],
+  "notes": [
+    "Assignments are provisional until Candidate Specification maturity.",
+    "A transport identifier names an MCL binding, not a hardware vendor or security level.",
+    "Profile identifiers are transport-scoped and governed by the owning binding."
+  ]
+}
