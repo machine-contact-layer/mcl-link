@@ -95,6 +95,12 @@ mcl_link_status_t mcl_link_install_context(
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
 
+    if (link->state == MCL_LINK_STATE_IDLE ||
+        link->state == MCL_LINK_STATE_DISCOVERED ||
+        link->state == MCL_LINK_STATE_CLOSED) {
+        return MCL_LINK_ERR_INVALID_STATE;
+    }
+
     if (key->wire_major > 15u) {
         return MCL_LINK_ERR_RANGE;
     }

@@ -12,17 +12,15 @@ extern "C" {
 
 /*
  * Returns a 16-bit mask with bit N set if wire_major is in 0..15.
- * Returns 0 if wire_major > 15. Single-evaluation, no aliasing.
+ * Returns 0 if wire_major > 15. Single-evaluation, no narrowing.
  */
-static inline uint16_t mcl_link_wire_major_mask(uint8_t wire_major)
+static inline uint16_t mcl_link_wire_major_mask(uint32_t wire_major)
 {
     if (wire_major > 15u) {
         return 0u;
     }
     return (uint16_t)(1u << wire_major);
 }
-
-#define MCL_LINK_WIRE_MAJOR_MASK(major) mcl_link_wire_major_mask((uint8_t)(major))
 
 typedef int32_t mcl_link_status_t;
 enum {

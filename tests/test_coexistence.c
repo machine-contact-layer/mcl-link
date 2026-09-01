@@ -37,7 +37,10 @@ int main(void)
     wire_header.extension_present = 0u;
     CHECK_WIRE_STATUS(mcl_wire_header_encode(&wire_header, wire_bytes), MCL_WIRE_OK);
 
-    CHECK_LINK_STATUS(mcl_link_init(&link, MCL_LINK_WIRE_MAJOR_MASK(0)), MCL_LINK_OK);
+    CHECK_LINK_STATUS(mcl_link_init(&link, mcl_link_wire_major_mask(0u)), MCL_LINK_OK);
+    CHECK_LINK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_DISCOVERED), MCL_LINK_OK);
+    CHECK_LINK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_CAPABILITIES), MCL_LINK_OK);
+    CHECK_LINK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_NEGOTIATING), MCL_LINK_OK);
 
     key.wire_major = 0u;
     key.context_id = 42u;
@@ -45,6 +48,7 @@ int main(void)
     key.ruleset_digest[0] = 0xAAu;
     key.ruleset_digest_size = 1u;
     CHECK_LINK_STATUS(mcl_link_install_context(&link, &key), MCL_LINK_OK);
+    CHECK_LINK_STATUS(mcl_link_transition(&link, MCL_LINK_STATE_ESTABLISHED), MCL_LINK_OK);
     CHECK_LINK_STATUS(mcl_link_authorize_context(&link, &key), MCL_LINK_OK);
 
     puts("mcl_wire and mcl_link header coexistence: PASS");
