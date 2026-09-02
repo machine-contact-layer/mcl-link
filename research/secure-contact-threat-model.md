@@ -2,6 +2,12 @@
 
 Status: **Research Note** — non-normative, no mechanism is selected here.
 
+**Scope.** This note designs an *optional* security profile. Authentication is
+something MCL can be configured to carry, not something MCL requires or is for
+(Architecture Charter §2.10, §2.10.1). Deployments that broadcast to unknown
+listeners, or whose peers already know each other, are complete uses of MCL and
+face none of what follows.
+
 This note states what a secure MCL contact would have to withstand. It
 deliberately proposes no cryptography. A threat model written after a mechanism
 is chosen tends to describe whatever that mechanism happens to defend.

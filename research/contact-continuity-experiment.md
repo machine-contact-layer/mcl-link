@@ -4,6 +4,12 @@ Status: **Research Note** — non-normative. This defines an experiment, not a
 specification. Nothing here is a candidate security profile, and no byte layout
 in this document is proposed for adoption.
 
+**Scope.** Contact continuity is a property an *optional* security profile would
+provide (Architecture Charter §2.10.1). A deployment that never migrates
+transports, or that migrates between machines already known to each other, does
+not need it. This experiment asks what it would take to have it, for the
+deployments that do.
+
 Companions:
 [`secure-contact-threat-model.md`](secure-contact-threat-model.md) states the
 problem; [`secure-contact-candidate.md`](secure-contact-candidate.md) surveys

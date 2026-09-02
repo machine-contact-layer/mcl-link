@@ -2,6 +2,10 @@
 
 Status: **Research Note** — non-normative. No mechanism is adopted here.
 
+**Scope.** Everything below concerns an *optional* security profile, which a
+deployment may choose not to use at all (Architecture Charter §2.10.1). Nothing
+here is required to use MCL.
+
 Companion to [`secure-contact-threat-model.md`](secure-contact-threat-model.md),
 which states the problem. This note surveys what already exists, so that MCL
 adopts rather than invents.
