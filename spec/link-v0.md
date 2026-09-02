@@ -80,7 +80,7 @@ LinkFrame {
     sequence?
     freshness?
     wire_payload
-    integrity?
+    frame_check?
 }
 ```
 
@@ -102,7 +102,7 @@ u16  sequence                         if FLAG_SEQUENCE    (0x04)
 u16  freshness_ms                     if FLAG_FRESHNESS   (0x08)
 u16  payload_len                      always
 u8   payload[payload_len]
-u32  integrity (CRC-32/IEEE)          if FLAG_INTEGRITY   (0x10)
+u32  frame_check (CRC-32/IEEE)        if FLAG_FRAME_CHECK (0x10)
 ```
 
 Minimum frame size is 8 bytes plus payload. `link_major` is 0 for this draft.
@@ -127,7 +127,7 @@ A conforming decoder MUST reject, never interpret:
 - any frame with a reserved flag bit set, as non-canonical;
 - any buffer too short for the fields the flags declare;
 - a `payload_len` exceeding the profile maximum;
-- a frame whose `integrity` field is present and does not verify.
+- a frame whose `frame_check` is present and does not verify.
 
 A decoder MUST report a buffer that ended early distinctly from a buffer that is
 complete but malformed. The two demand opposite responses: a short buffer may
@@ -137,9 +137,25 @@ decoder that reports both identically forces the carriage either to stall on
 corruption or to discard recoverable reads. Bindings MUST preserve this
 distinction when translating into their own status vocabulary.
 
-Absence of an `integrity` field does not make a frame trusted. It makes it
-unverified. Carriage profiles decide whether to require the field, based on
-whether the underlying medium already provides equivalent detection.
+### 3.2.1 What the frame check is not
+
+`frame_check` is a CRC-32. A CRC detects accidental corruption. It is **not** a
+cryptographic mechanism and provides no protection against deliberate
+modification: an adversary who alters a frame recomputes the CRC over the
+altered bytes.
+
+The field was originally called `integrity`. That name invited exactly the
+wrong reading in a layer whose central rule is that reception is not identity,
+authenticity, authority or trust, and it has been renamed. The wire bit is
+unchanged; only the name is. Cryptographic authenticity, when MCL gains it,
+belongs to a security profile above this layer and MUST be a separate mechanism
+under a separate name, so that an implementation can never satisfy an
+authenticity requirement by setting a CRC flag.
+
+Absence of a `frame_check` does not make a frame trusted. It makes it
+unchecked. Presence of one does not make a frame authentic. It makes it
+undamaged. Carriage profiles decide whether to require the field, based on
+whether the underlying medium already provides equivalent error detection.
 
 A decoder reports the exact number of bytes the frame occupied, so a reliable
 stream carriage can decode successive frames without rescanning. Trailing bytes

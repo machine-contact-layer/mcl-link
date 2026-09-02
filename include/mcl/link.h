@@ -31,7 +31,7 @@ enum {
     MCL_LINK_ERR_CONTEXT_MISMATCH = 4,
     MCL_LINK_ERR_NO_ACTIVE_CONTEXT = 5,
     MCL_LINK_ERR_INVALID_STATE = 6,
-    MCL_LINK_ERR_INTEGRITY = 7,
+    MCL_LINK_ERR_FRAME_CHECK = 7,
     /*
      * The buffer ended before the frame it declares. Distinct from
      * MCL_LINK_ERR_RANGE on purpose: truncation means "these bytes may still
@@ -134,7 +134,7 @@ uint8_t mcl_link_context_key_equals(
  *   u16  freshness_ms                       if MCL_LINK_FLAG_FRESHNESS
  *   u16  payload_len                        always present
  *   u8   payload[payload_len]
- *   u32  integrity (CRC-32/IEEE)            if MCL_LINK_FLAG_INTEGRITY
+ *   u32  frame_check (CRC-32/IEEE)          if MCL_LINK_FLAG_FRAME_CHECK
  *
  * Minimum frame is 8 bytes plus payload (class/version, flags, source_ref,
  * payload_len). Decoding is strict: an unknown
@@ -142,8 +142,22 @@ uint8_t mcl_link_context_key_equals(
  * rejected rather than interpreted, and reports MCL_LINK_ERR_RANGE: those
  * bytes can never become a valid frame. A buffer that simply ends early
  * reports MCL_LINK_ERR_TRUNCATED instead, because more bytes could still
- * complete it. A frame carrying an integrity field whose CRC does not verify
- * is rejected; a frame without one is not thereby trusted, only unverified.
+ * complete it. A frame carrying a frame check whose CRC does not verify is
+ * rejected; a frame without one is not thereby trusted, only unchecked.
+ *
+ * WHAT THE FRAME CHECK IS NOT
+ *
+ * MCL_LINK_FLAG_FRAME_CHECK selects a CRC-32. A CRC detects accidental
+ * corruption. It is not a cryptographic mechanism and gives no protection at
+ * all against deliberate modification: an adversary who alters a frame simply
+ * recomputes the CRC over the altered bytes.
+ *
+ * The flag was first named MCL_LINK_FLAG_INTEGRITY, which invited exactly the
+ * wrong reading. In a layer whose central rule is that reception is not
+ * identity, authenticity, authority or trust, a field named "integrity" that
+ * establishes none of them is a trap for implementers rather than a
+ * convenience. Cryptographic authenticity, when it exists, belongs to a
+ * security profile above this layer, under a separate name.
  *
  * Reception of a frame is not identity, authority, or trust. source_ref and
  * session_ref are contact references for correlation only, never proof.
@@ -154,7 +168,7 @@ uint8_t mcl_link_context_key_equals(
 #define MCL_LINK_FRAME_MAX_PAYLOAD  1024u
 
 /* Total size of the optional fields when every optional flag is set:
- * destination 4 + session 4 + sequence 2 + freshness 2 + integrity 4. */
+ * destination 4 + session 4 + sequence 2 + freshness 2 + frame check 4. */
 #define MCL_LINK_FRAME_MAX_OPTIONAL 16u
 
 /*
@@ -191,7 +205,7 @@ enum {
 #define MCL_LINK_FLAG_SESSION     0x02u
 #define MCL_LINK_FLAG_SEQUENCE    0x04u
 #define MCL_LINK_FLAG_FRESHNESS   0x08u
-#define MCL_LINK_FLAG_INTEGRITY   0x10u
+#define MCL_LINK_FLAG_FRAME_CHECK   0x10u
 #define MCL_LINK_FLAG_RESERVED    0xE0u
 
 typedef struct {
@@ -211,7 +225,7 @@ size_t mcl_link_frame_encoded_size(const mcl_link_frame_t *frame);
 
 /*
  * Encode a frame. The caller owns the output buffer; no allocation occurs.
- * Writes the integrity field when MCL_LINK_FLAG_INTEGRITY is set.
+ * Writes the frame check when MCL_LINK_FLAG_FRAME_CHECK is set.
  */
 mcl_link_status_t mcl_link_frame_encode(
     const mcl_link_frame_t *frame,
@@ -232,7 +246,7 @@ mcl_link_status_t mcl_link_frame_decode(
     mcl_link_frame_t *frame,
     size_t *consumed);
 
-/* CRC-32/IEEE over a byte range, as used by the integrity field. */
+/* CRC-32/IEEE over a byte range, as used by the frame check. */
 uint32_t mcl_link_crc32(const uint8_t *data, size_t size);
 
 #ifdef __cplusplus

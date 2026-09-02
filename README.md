@@ -36,6 +36,26 @@ ESTABLISHED / IDLE
 
 Acoustic-specific sounding and spectrum convergence are defined in `mcl-ap`, not here.
 
+## Security research track
+
+MCL's normal condition is that neither machine yet has a reason to trust the
+other, and its first-contact medium is assumed observable. Nothing in MCL today
+provides confidentiality, authenticity, or peer authentication, and no part of
+the codebase implies otherwise.
+
+Two research notes state the problem before any mechanism is chosen:
+
+- [`research/secure-contact-threat-model.md`](research/secure-contact-threat-model.md)
+  — what a secure contact must withstand, which security properties are distinct
+  and must stay distinct, and what is already true in the code.
+- [`research/secure-contact-candidate.md`](research/secure-contact-candidate.md)
+  — prior art worth adopting rather than reinventing, and the one property
+  (contact continuity across a transport change) that is MCL's own to define.
+
+The Link frame's `frame_check` is a CRC-32. It detects accidental corruption and
+provides no protection against a deliberate modification. It is named so that it
+cannot be mistaken for a cryptographic mechanism.
+
 ## Status
 
 Private research repository. Pre-v0.1 candidate specification.

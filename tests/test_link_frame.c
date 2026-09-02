@@ -72,7 +72,7 @@ static void test_all_optionals_round_trip(void)
     tx.frame_class = MCL_LINK_CLASS_NEGOTIATION;
     tx.flags = (uint8_t)(MCL_LINK_FLAG_DESTINATION | MCL_LINK_FLAG_SESSION |
                          MCL_LINK_FLAG_SEQUENCE | MCL_LINK_FLAG_FRESHNESS |
-                         MCL_LINK_FLAG_INTEGRITY);
+                         MCL_LINK_FLAG_FRAME_CHECK);
     tx.source_ref = 0xDEADBEEFu;
     tx.destination_ref = 0xFEEDFACEu;
     tx.session_ref = 0x01020304u;
@@ -232,7 +232,7 @@ static void test_reject_truncation_at_every_length(void)
     tx.frame_class = MCL_LINK_CLASS_HANDOFF;
     tx.flags = (uint8_t)(MCL_LINK_FLAG_DESTINATION | MCL_LINK_FLAG_SESSION |
                          MCL_LINK_FLAG_SEQUENCE | MCL_LINK_FLAG_FRESHNESS |
-                         MCL_LINK_FLAG_INTEGRITY);
+                         MCL_LINK_FLAG_FRAME_CHECK);
     tx.source_ref = 2u;
     tx.payload = k_presence;
     tx.payload_len = (uint16_t)sizeof(k_presence);
@@ -300,7 +300,7 @@ static void test_integrity_detects_corruption(void)
 
     memset(&tx, 0, sizeof(tx));
     tx.frame_class = MCL_LINK_CLASS_DATA;
-    tx.flags = MCL_LINK_FLAG_INTEGRITY;
+    tx.flags = MCL_LINK_FLAG_FRAME_CHECK;
     tx.source_ref = 0xA5A5A5A5u;
     tx.payload = k_presence;
     tx.payload_len = (uint16_t)sizeof(k_presence);

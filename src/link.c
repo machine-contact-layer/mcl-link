@@ -348,7 +348,7 @@ static size_t mcl_link_optional_size(uint8_t flags)
     if ((flags & MCL_LINK_FLAG_SESSION) != 0u)     n += 4u;
     if ((flags & MCL_LINK_FLAG_SEQUENCE) != 0u)    n += 2u;
     if ((flags & MCL_LINK_FLAG_FRESHNESS) != 0u)   n += 2u;
-    if ((flags & MCL_LINK_FLAG_INTEGRITY) != 0u)   n += 4u;
+    if ((flags & MCL_LINK_FLAG_FRAME_CHECK) != 0u)   n += 4u;
 
     return n;
 }
@@ -461,7 +461,7 @@ mcl_link_status_t mcl_link_frame_encode(
     mcl_link_copy_bytes(out + pos, frame->payload, (size_t)frame->payload_len);
     pos += (size_t)frame->payload_len;
 
-    if ((frame->flags & MCL_LINK_FLAG_INTEGRITY) != 0u) {
+    if ((frame->flags & MCL_LINK_FLAG_FRAME_CHECK) != 0u) {
         mcl_link_put_u32(out + pos, mcl_link_crc32(out, pos));
         pos += 4u;
     }
@@ -551,14 +551,14 @@ mcl_link_status_t mcl_link_frame_decode(
     frame->payload = (payload_len != 0u) ? (in + pos) : NULL;
     pos += (size_t)payload_len;
 
-    if ((flags & MCL_LINK_FLAG_INTEGRITY) != 0u) {
+    if ((flags & MCL_LINK_FLAG_FRAME_CHECK) != 0u) {
         uint32_t received;
         if (in_size - pos < 4u) {
             return MCL_LINK_ERR_TRUNCATED;
         }
         received = mcl_link_get_u32(in + pos);
         if (received != mcl_link_crc32(in, pos)) {
-            return MCL_LINK_ERR_INTEGRITY;
+            return MCL_LINK_ERR_FRAME_CHECK;
         }
         pos += 4u;
     }
