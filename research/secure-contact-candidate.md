@@ -42,15 +42,32 @@ against an active attacker. The BLE experiment in `mcl-ble/evidence` used
 exactly this, and its record says so. *BLE connected* must never imply *peer
 authenticated*.
 
-**EDHOC (RFC 9528).** Compact authenticated Diffie-Hellman for constrained
-devices: transport-independent, mutually authenticated, forward secret, with
-identity protection, transcript hashes, connection references, credential
-agility, an exporter for derived keys, and a slot for external authorization
-data. The property list is close to what §1 leaves undelegated, and the
-transcript hashes are directly relevant to contact continuity. Its CBOR/COSE
-representation would belong **inside an optional security profile only**;
-importing it into MCL Wire would undo the deterministic-codec design for no
-benefit.
+**EDHOC (RFC 9528).** IETF Standards Track authenticated ephemeral
+Diffie-Hellman for constrained devices: mutually authenticated, forward secret,
+with identity protection, transcript hashes, cipher-suite negotiation,
+connection references, credential agility, an exporter for derived keys, and a
+slot for external authorization data.
+
+Two properties make it the leading candidate rather than merely a good one.
+First, **the transport is supplied by the application profile rather than built
+in**, which means a single EDHOC exchange can legitimately begin on one medium
+and finish on another — exactly the shape contact migration needs. Second, its
+connection identifiers exist for state correlation and explicitly not as
+authentication identifiers, which maps directly onto MCL's own separation of
+contact references from identity.
+
+Published trace sizes (RFC 9529) are in the tens of bytes per message depending
+on method and credential choice, which is not absurd for an acoustic bootstrap —
+though that is a reason to *measure* the split, not to assume all messages
+belong on AP.
+
+Its CBOR/COSE representation would belong **inside an optional security profile
+only**; importing it into MCL Wire would undo the deterministic-codec design for
+no benefit.
+
+EDHOC is a candidate, not scripture. RFC 9528 has published errata, and MCL's
+transport-spanning profile would in any case be novel integration logic that no
+existing analysis covers.
 
 **TLS 1.3 exporters and channel binding (RFC 9266).** The established way to
 bind higher-level authentication to one specific channel. This is the correct
@@ -84,7 +101,7 @@ MCL Link                   contact, session, migration
         +-- optional Secure Contact Profile
                 |
                 +-- adopted authenticated key exchange
-                +-- contact transcript binding   (MCL-defined)
+                +-- contact continuity binding   (MCL-defined)
                 |
         AP / BLE / IP / UWB / future transport
 ```
@@ -108,17 +125,28 @@ The transports are now individually demonstrated: acoustic at E3/E4, IP over
 2.4 GHz and BLE both at E4. The next experiment is not a fourth radio. It is the
 first flow that crosses them:
 
+The correction in the threat model changes the shape of this experiment. Because
+proving knowledge of a public transcript proves nothing, the cryptographic
+exchange cannot begin *after* migration. **It must begin on the first-contact
+medium and finish on the second**, so that both peers have committed secret
+state before the transport changes:
+
 ```text
 AP first contact
    ephemeral references, nonces, capabilities, no stable identity
         |
+AP   ->  key exchange begins here          <- both peers commit secret state
+AP   <-  peer's contribution
+        |
 TRANSPORT_OFFER  ->  BLE or Wi-Fi
         |
-real connection on that transport
+        |  migration
+        v
+BLE  ->  the same key exchange completes
+BLE  <-  key confirmation
         |
-authenticated key exchange at the MCL layer
-        |
-proof of the same contact transcript          <- the property MCL owns
+continuity holds because the peer possesses handshake state
+committed during the acoustic contact, not because it saw it
         |
 credential exchange, now private
         |
@@ -127,13 +155,16 @@ local authorization decision
 handoff to the application protocol
 ```
 
-The success criterion is stronger than any transport test run so far, and it is
-falsifiable: an attacker that connects over BLE without having participated in
-the acoustic contact must fail the transcript proof.
+The success criterion is falsifiable, which no transport test so far has been:
+**a passive observer that heard every acoustic byte and then races onto BLE must
+fail**, because it holds none of the secret state.
 
 That failure case is the experiment. Demonstrating the honest path succeeds is
 the easy half, and on its own would prove only that three radios can carry the
 same bytes — which is already established.
+
+The detailed design, message placement options and the required negative tests
+are in [`contact-continuity-experiment.md`](contact-continuity-experiment.md).
 
 ## 5. What must not happen next
 
@@ -146,3 +177,7 @@ same bytes — which is already established.
 - No `trusted` boolean, on any interface, in any repository.
 - Nothing in the codebase may imply confidentiality or authenticity while none
   exists, which is today the case everywhere.
+- No continuity proof built on public values. Knowing the transcript is not
+  participating in the contact; see the threat model §5.1.
+- No session resumption, no 0-RTT and no long-lived pairing shortcut until the
+  fresh-contact flow is secure. Each adds replay surface that buys nothing yet.

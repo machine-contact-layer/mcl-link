@@ -69,6 +69,13 @@ machine it just heard. Nothing was forged and nothing was broken; the attacker
 simply arrived at the right moment. Defeating this requires binding the new
 channel to the original contact — see §5.
 
+**Misbinder (unknown-key-share).** Observes first contact, learns every public
+value exchanged, then establishes its own perfectly valid authenticated session
+with one peer on the migrated transport and binds that session to the contact it
+merely watched. Nothing is forged and no cryptography is broken. This is the
+adversary that defeats any continuity scheme built on public values, and it is
+the specific reason for §5.2.
+
 **Downgrade.** Forces peers to a weaker transport, a weaker security profile, or
 no security at all, by suppressing or altering capability advertisements.
 Especially dangerous during first contact, where capabilities are exchanged
@@ -121,16 +128,66 @@ The requirement is that after migration, both peers can establish:
 
 > the peer I am now talking to participated in the contact I just had.
 
-The natural construction is a transcript: a hash over the canonical Link frames
-of the first-contact exchange, with explicit role and direction separation,
-which the security exchange on the new transport must prove knowledge of. The
-existing Link frame is already a canonical byte sequence, which is what makes
-this feasible without inventing a second encoding.
+### 5.1 The error to avoid: a transcript hash proves nothing on its own
 
-Note what this does and does not give. It gives continuity. It does not give
-identity: a relay that faithfully forwarded the original contact is still the
-same participant by this definition. Continuity and identity are separate rows
-in the table above and must stay separate.
+An earlier revision of this note proposed hashing the canonical first-contact
+frames and requiring the peer on the new transport to *prove knowledge of that
+hash*. **That construction is worthless, and the reason is worth stating
+plainly so it is never reintroduced.**
+
+First contact happens on an observable medium. A passive listener therefore
+receives every nonce, every contact reference, every capability advertisement
+and every transport offer, and can compute the identical hash. Proving knowledge
+of it proves only that the prover was within earshot.
+
+```text
+X  <------------ AP ------------>  Y
+                  |
+                  | everything is public
+                  v
+              attacker A
+
+A computes H(transcript) exactly as X and Y do.
+A races onto BLE, runs its own key exchange with X,
+and presents a proof over H(transcript).
+
+X cannot distinguish A from Y.
+```
+
+The general form is a **misbinding** or **unknown-key-share** attack: the
+attacker establishes a legitimate cryptographic session of its own and binds it
+to a context it merely observed. The proof is valid; the binding is a lie.
+
+### 5.2 What a continuity proof must actually depend on
+
+> A continuity proof MUST depend on **secret state committed by both peers
+> during the original contact**, never on public bytes exchanged during it.
+
+Concretely, both peers must contribute material an observer cannot reproduce —
+ephemeral key contributions are the standard construction — *before* the
+migration occurs. The public transcript then serves as the **context that is
+authenticated**, not as the **secret that is proven**. Those two roles must not
+be confused:
+
+```text
+transcript hash        public       what is bound
+handshake secret       private      what does the binding
+```
+
+This mirrors TLS 1.3 exporter-based channel binding, where the binding value
+identifies a channel but is not itself a secret and must not be treated as one.
+
+A consequence for sequencing: if only one peer has contributed cryptographic
+material before the transport changes, an attacker can still become the
+responder on the new channel. **Both** contributions must precede migration, or
+the responder must commit separately on the first-contact medium.
+
+### 5.3 What continuity still does not give
+
+It gives continuity, and only continuity. It does not give identity: a relay
+that faithfully forwarded the original contact remains the same participant by
+this definition. Continuity and identity are separate rows in the table above
+and must stay separate.
 
 ## 6. Consequences for what first contact may carry
 
@@ -180,8 +237,12 @@ nothing should be built that implies otherwise until a profile exists.
 
 - Which mechanism, if any, MCL should adopt rather than invent — see
   [`secure-contact-candidate.md`](secure-contact-candidate.md).
-- Whether the transcript hashes canonical Link frames directly, or a derived
-  structure that survives retransmission and loss on an unreliable medium.
+- Whether the authenticated context is built from canonical Link frames
+  directly, or from a logical structure that survives retransmission,
+  fragmentation and loss. Hashing physical byte history cannot work: acoustic
+  repetition, BLE fragmentation and transport-local retries all mean two correct
+  implementations can observe the same negotiation through different byte
+  histories.
 - How a security profile is negotiated during first contact without that
   negotiation itself becoming the downgrade surface.
 - What a receive-only node can establish, given it cannot participate in a key

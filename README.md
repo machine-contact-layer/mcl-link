@@ -51,6 +51,14 @@ Two research notes state the problem before any mechanism is chosen:
 - [`research/secure-contact-candidate.md`](research/secure-contact-candidate.md)
   — prior art worth adopting rather than reinventing, and the one property
   (contact continuity across a transport change) that is MCL's own to define.
+- [`research/contact-continuity-experiment.md`](research/contact-continuity-experiment.md)
+  — the next experiment, and the eight attacks it has to survive.
+
+The central result so far is a negative one: **proving knowledge of the contact
+transcript proves nothing**, because first contact is observable and any
+listener can compute the same value. A continuity proof must depend on secret
+state both peers committed *during* the contact, which forces the key exchange
+to begin on the first medium and finish on the second.
 
 The Link frame's `frame_check` is a CRC-32. It detects accidental corruption and
 provides no protection against a deliberate modification. It is named so that it
