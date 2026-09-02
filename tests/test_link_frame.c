@@ -239,12 +239,55 @@ static void test_reject_truncation_at_every_length(void)
     CHECK(mcl_link_frame_encode(&tx, buf, sizeof(buf), &written) == MCL_LINK_OK,
           "encode for truncation test");
 
+    /*
+     * Every short prefix must report truncation specifically, not a generic
+     * range error. A stream carriage relies on that distinction to decide
+     * between waiting for more bytes and resynchronising, so a regression here
+     * would turn a recoverable read into a dropped connection.
+     */
     for (n = 0u; n < written; ++n) {
-        CHECK(mcl_link_frame_decode(buf, n, &rx, &consumed) != MCL_LINK_OK,
-              "short buffer never decodes");
+        CHECK(mcl_link_frame_decode(buf, n, &rx, &consumed) == MCL_LINK_ERR_TRUNCATED,
+              "short buffer reports truncation, not malformation");
     }
     CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed) == MCL_LINK_OK,
           "full buffer still decodes");
+}
+
+/*
+ * The counterpart to the truncation test: a complete buffer carrying meaning
+ * this version cannot interpret must never be reported as truncated, because
+ * no number of additional bytes would make it valid.
+ */
+static void test_malformed_is_not_truncation(void)
+{
+    mcl_link_frame_t tx, rx;
+    uint8_t buf[128];
+    size_t written = 0u, consumed = 0u;
+
+    printf("[TEST] a complete but malformed frame is not reported as truncated\n");
+
+    memset(&tx, 0, sizeof(tx));
+    tx.frame_class = MCL_LINK_CLASS_DATA;
+    tx.source_ref = 0x11223344u;
+    tx.payload = k_presence;
+    tx.payload_len = (uint16_t)sizeof(k_presence);
+    CHECK(mcl_link_frame_encode(&tx, buf, sizeof(buf), &written) == MCL_LINK_OK,
+          "encode baseline");
+
+    buf[0] = (uint8_t)((MCL_LINK_FRAME_MAJOR << 4u) | 0x0Fu);
+    CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed) == MCL_LINK_ERR_RANGE,
+          "unknown frame class is a range error, not truncation");
+
+    buf[0] = (uint8_t)((MCL_LINK_FRAME_MAJOR << 4u) | MCL_LINK_CLASS_DATA);
+    buf[1] |= 0x80u;
+    CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed) == MCL_LINK_ERR_RANGE,
+          "reserved flag bit is a range error, not truncation");
+
+    buf[1] = 0u;
+    buf[0] = (uint8_t)((1u << 4u) | MCL_LINK_CLASS_DATA);
+    CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed)
+              == MCL_LINK_ERR_INCOMPATIBLE_VERSION,
+          "future major version is reported as a version failure");
 }
 
 static void test_integrity_detects_corruption(void)
@@ -380,6 +423,7 @@ int main(void)
     test_reject_unknown_class();
     test_reject_reserved_flags();
     test_reject_truncation_at_every_length();
+    test_malformed_is_not_truncation();
     test_integrity_detects_corruption();
     test_stream_of_frames();
     test_argument_validation();

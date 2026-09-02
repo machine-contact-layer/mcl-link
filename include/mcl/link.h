@@ -31,7 +31,14 @@ enum {
     MCL_LINK_ERR_CONTEXT_MISMATCH = 4,
     MCL_LINK_ERR_NO_ACTIVE_CONTEXT = 5,
     MCL_LINK_ERR_INVALID_STATE = 6,
-    MCL_LINK_ERR_INTEGRITY = 7
+    MCL_LINK_ERR_INTEGRITY = 7,
+    /*
+     * The buffer ended before the frame it declares. Distinct from
+     * MCL_LINK_ERR_RANGE on purpose: truncation means "these bytes may still
+     * become a valid frame once more arrive", which a stream carriage must be
+     * able to tell apart from "these bytes can never be a valid frame".
+     */
+    MCL_LINK_ERR_TRUNCATED = 8
 };
 
 /* Contact / Link Lifecycle States */
@@ -131,10 +138,12 @@ uint8_t mcl_link_context_key_equals(
  *
  * Minimum frame is 8 bytes plus payload (class/version, flags, source_ref,
  * payload_len). Decoding is strict: an unknown
- * link_major, an unknown frame class, any reserved flag bit set, or a
- * truncated buffer is rejected rather than interpreted. A frame carrying an
- * integrity field whose CRC does not verify is rejected; a frame without one
- * is not thereby trusted, only unverified.
+ * link_major, an unknown frame class, or any reserved flag bit set is
+ * rejected rather than interpreted, and reports MCL_LINK_ERR_RANGE: those
+ * bytes can never become a valid frame. A buffer that simply ends early
+ * reports MCL_LINK_ERR_TRUNCATED instead, because more bytes could still
+ * complete it. A frame carrying an integrity field whose CRC does not verify
+ * is rejected; a frame without one is not thereby trusted, only unverified.
  *
  * Reception of a frame is not identity, authority, or trust. source_ref and
  * session_ref are contact references for correlation only, never proof.
@@ -143,6 +152,23 @@ uint8_t mcl_link_context_key_equals(
 #define MCL_LINK_FRAME_MAJOR        0u
 #define MCL_LINK_FRAME_MIN_SIZE     8u
 #define MCL_LINK_FRAME_MAX_PAYLOAD  1024u
+
+/* Total size of the optional fields when every optional flag is set:
+ * destination 4 + session 4 + sequence 2 + freshness 2 + integrity 4. */
+#define MCL_LINK_FRAME_MAX_OPTIONAL 16u
+
+/*
+ * Largest frame this version can produce: the mandatory header, every optional
+ * field, and a maximum payload.
+ *
+ * Transport bindings size their carriage against this rather than against a
+ * number of their own. A binding whose reassembly limit is lower than this
+ * silently cannot carry a legal frame, which is an interoperability failure
+ * that only appears under load.
+ */
+#define MCL_LINK_FRAME_MAX_SIZE     (MCL_LINK_FRAME_MIN_SIZE     \
+                                   + MCL_LINK_FRAME_MAX_OPTIONAL \
+                                   + MCL_LINK_FRAME_MAX_PAYLOAD)
 
 /* Frame classes, spec/link-v0.md section 4. */
 typedef uint8_t mcl_link_frame_class_t;

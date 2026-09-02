@@ -108,6 +108,16 @@ u32  integrity (CRC-32/IEEE)          if FLAG_INTEGRITY   (0x10)
 Minimum frame size is 8 bytes plus payload. `link_major` is 0 for this draft.
 Flag bits 5..7 are reserved.
 
+`payload_len` MUST NOT exceed 1024, so the largest frame this version can
+produce is 1048 bytes: 8 mandatory, 16 of optional fields when every flag is
+set, and 1024 of payload.
+
+A transport binding MUST size its carriage — reassembly buffers, length
+prefixes, MTU accounting — against that bound rather than against a limit
+chosen independently. A binding whose limit is lower cannot carry a legal frame,
+and because small frames are the common case, the failure surfaces only under
+load and looks like a transport fault rather than a specification mismatch.
+
 ### 3.2 Decoding rules
 
 A conforming decoder MUST reject, never interpret:
@@ -118,6 +128,14 @@ A conforming decoder MUST reject, never interpret:
 - any buffer too short for the fields the flags declare;
 - a `payload_len` exceeding the profile maximum;
 - a frame whose `integrity` field is present and does not verify.
+
+A decoder MUST report a buffer that ended early distinctly from a buffer that is
+complete but malformed. The two demand opposite responses: a short buffer may
+become a valid frame once more bytes arrive, so a stream carriage waits, while
+malformed bytes never will, so the carriage must resynchronise instead. A
+decoder that reports both identically forces the carriage either to stall on
+corruption or to discard recoverable reads. Bindings MUST preserve this
+distinction when translating into their own status vocabulary.
 
 Absence of an `integrity` field does not make a frame trusted. It makes it
 unverified. Carriage profiles decide whether to require the field, based on

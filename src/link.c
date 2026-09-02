@@ -1,8 +1,37 @@
 #include "mcl/link.h"
 
+/*
+ * Byte fill and byte copy the compiler may not rewrite into memset or memcpy.
+ *
+ * An optimising compiler pattern-matches a plain indexed loop over a buffer
+ * into the corresponding libc call. That reintroduces a libc dependency into
+ * an object required to link on a freestanding target where no C library is
+ * present, and the breakage appears only at link time on the real hardware.
+ * A volatile destination defeats the rewrite. mcl-wire and the transport
+ * bindings solve the same problem the same way.
+ */
+static void mcl_link_zero_bytes(uint8_t *dst, size_t count)
+{
+    volatile uint8_t *out = (volatile uint8_t *)dst;
+    size_t i;
+
+    for (i = 0u; i < count; ++i) {
+        out[i] = 0u;
+    }
+}
+
+static void mcl_link_copy_bytes(uint8_t *dst, const uint8_t *src, size_t count)
+{
+    volatile uint8_t *out = (volatile uint8_t *)dst;
+    size_t i;
+
+    for (i = 0u; i < count; ++i) {
+        out[i] = src[i];
+    }
+}
+
 static void mcl_link_zero_context(mcl_link_context_key_t *key)
 {
-    size_t i;
     if (key == NULL) {
         return;
     }
@@ -10,9 +39,7 @@ static void mcl_link_zero_context(mcl_link_context_key_t *key)
     key->context_id = 0u;
     key->generation = 0u;
     key->ruleset_digest_size = 0u;
-    for (i = 0u; i < MCL_LINK_RULESET_DIGEST_MAX_SIZE; ++i) {
-        key->ruleset_digest[i] = 0u;
-    }
+    mcl_link_zero_bytes(key->ruleset_digest, MCL_LINK_RULESET_DIGEST_MAX_SIZE);
 }
 
 static void mcl_link_clear_context(mcl_link_t *link)
@@ -89,8 +116,6 @@ mcl_link_status_t mcl_link_install_context(
     mcl_link_t *link,
     const mcl_link_context_key_t *key)
 {
-    size_t i;
-
     if (link == NULL || key == NULL) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
@@ -119,12 +144,14 @@ mcl_link_status_t mcl_link_install_context(
     link->active_context.generation = key->generation;
     link->active_context.ruleset_digest_size = key->ruleset_digest_size;
 
-    for (i = 0u; i < (size_t)key->ruleset_digest_size; ++i) {
-        link->active_context.ruleset_digest[i] = key->ruleset_digest[i];
-    }
-    for (; i < MCL_LINK_RULESET_DIGEST_MAX_SIZE; ++i) {
-        link->active_context.ruleset_digest[i] = 0u;
-    }
+    mcl_link_copy_bytes(link->active_context.ruleset_digest,
+                        key->ruleset_digest,
+                        (size_t)key->ruleset_digest_size);
+    /* Never leave a previous digest's tail visible behind a shorter one. */
+    mcl_link_zero_bytes(link->active_context.ruleset_digest
+                            + key->ruleset_digest_size,
+                        (size_t)(MCL_LINK_RULESET_DIGEST_MAX_SIZE
+                                 - key->ruleset_digest_size));
 
     link->context_valid = 1u;
     return MCL_LINK_OK;
@@ -391,7 +418,6 @@ mcl_link_status_t mcl_link_frame_encode(
 {
     size_t need;
     size_t pos = 0u;
-    size_t i;
 
     if (frame == NULL || out == NULL || written == NULL) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
@@ -432,9 +458,7 @@ mcl_link_status_t mcl_link_frame_encode(
     mcl_link_put_u16(out + pos, frame->payload_len);
     pos += 2u;
 
-    for (i = 0u; i < (size_t)frame->payload_len; ++i) {
-        out[pos + i] = frame->payload[i];
-    }
+    mcl_link_copy_bytes(out + pos, frame->payload, (size_t)frame->payload_len);
     pos += (size_t)frame->payload_len;
 
     if ((frame->flags & MCL_LINK_FLAG_INTEGRITY) != 0u) {
@@ -461,7 +485,7 @@ mcl_link_status_t mcl_link_frame_decode(
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
     if (in_size < (size_t)MCL_LINK_FRAME_MIN_SIZE) {
-        return MCL_LINK_ERR_RANGE;
+        return MCL_LINK_ERR_TRUNCATED;
     }
 
     major = (uint8_t)((in[0] >> 4u) & 0x0Fu);
@@ -485,7 +509,7 @@ mcl_link_status_t mcl_link_frame_decode(
 
     optional = mcl_link_optional_size(flags);
     if (in_size < (size_t)MCL_LINK_FRAME_MIN_SIZE + optional) {
-        return MCL_LINK_ERR_RANGE;
+        return MCL_LINK_ERR_TRUNCATED;
     }
 
     frame->source_ref = mcl_link_get_u32(in + pos);
@@ -520,7 +544,7 @@ mcl_link_status_t mcl_link_frame_decode(
         return MCL_LINK_ERR_RANGE;
     }
     if (in_size - pos < (size_t)payload_len) {
-        return MCL_LINK_ERR_RANGE;
+        return MCL_LINK_ERR_TRUNCATED;
     }
 
     frame->payload_len = payload_len;
@@ -530,7 +554,7 @@ mcl_link_status_t mcl_link_frame_decode(
     if ((flags & MCL_LINK_FLAG_INTEGRITY) != 0u) {
         uint32_t received;
         if (in_size - pos < 4u) {
-            return MCL_LINK_ERR_RANGE;
+            return MCL_LINK_ERR_TRUNCATED;
         }
         received = mcl_link_get_u32(in + pos);
         if (received != mcl_link_crc32(in, pos)) {
