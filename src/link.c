@@ -286,3 +286,259 @@ mcl_link_status_t mcl_link_has_active_context(
     *has_context = link->context_valid;
     return MCL_LINK_OK;
 }
+
+/* ============================================================
+ * Link frame v0
+ * ============================================================ */
+
+uint32_t mcl_link_crc32(const uint8_t *data, size_t size)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    size_t i;
+    unsigned bit;
+
+    if (data == NULL) {
+        return 0u;
+    }
+
+    for (i = 0u; i < size; ++i) {
+        crc ^= (uint32_t)data[i];
+        for (bit = 0u; bit < 8u; ++bit) {
+            uint32_t mask = 0u - (crc & 1u);
+            crc = (crc >> 1u) ^ (0xEDB88320u & mask);
+        }
+    }
+
+    return ~crc;
+}
+
+/* Length of the optional fields selected by `flags`. */
+static size_t mcl_link_optional_size(uint8_t flags)
+{
+    size_t n = 0u;
+
+    if ((flags & MCL_LINK_FLAG_DESTINATION) != 0u) n += 4u;
+    if ((flags & MCL_LINK_FLAG_SESSION) != 0u)     n += 4u;
+    if ((flags & MCL_LINK_FLAG_SEQUENCE) != 0u)    n += 2u;
+    if ((flags & MCL_LINK_FLAG_FRESHNESS) != 0u)   n += 2u;
+    if ((flags & MCL_LINK_FLAG_INTEGRITY) != 0u)   n += 4u;
+
+    return n;
+}
+
+static uint8_t mcl_link_frame_encodable(const mcl_link_frame_t *frame)
+{
+    if (frame == NULL) {
+        return 0u;
+    }
+    if (frame->frame_class >= MCL_LINK_CLASS_COUNT) {
+        return 0u;
+    }
+    if ((frame->flags & MCL_LINK_FLAG_RESERVED) != 0u) {
+        return 0u;
+    }
+    if (frame->payload_len > MCL_LINK_FRAME_MAX_PAYLOAD) {
+        return 0u;
+    }
+    if (frame->payload_len != 0u && frame->payload == NULL) {
+        return 0u;
+    }
+    return 1u;
+}
+
+size_t mcl_link_frame_encoded_size(const mcl_link_frame_t *frame)
+{
+    if (mcl_link_frame_encodable(frame) == 0u) {
+        return 0u;
+    }
+    return (size_t)MCL_LINK_FRAME_MIN_SIZE
+         + mcl_link_optional_size(frame->flags)
+         + (size_t)frame->payload_len;
+}
+
+static void mcl_link_put_u16(uint8_t *out, uint16_t v)
+{
+    out[0] = (uint8_t)(v >> 8u);
+    out[1] = (uint8_t)(v & 0xFFu);
+}
+
+static void mcl_link_put_u32(uint8_t *out, uint32_t v)
+{
+    out[0] = (uint8_t)(v >> 24u);
+    out[1] = (uint8_t)((v >> 16u) & 0xFFu);
+    out[2] = (uint8_t)((v >> 8u) & 0xFFu);
+    out[3] = (uint8_t)(v & 0xFFu);
+}
+
+static uint16_t mcl_link_get_u16(const uint8_t *in)
+{
+    return (uint16_t)(((uint16_t)in[0] << 8u) | (uint16_t)in[1]);
+}
+
+static uint32_t mcl_link_get_u32(const uint8_t *in)
+{
+    return ((uint32_t)in[0] << 24u)
+         | ((uint32_t)in[1] << 16u)
+         | ((uint32_t)in[2] << 8u)
+         | (uint32_t)in[3];
+}
+
+mcl_link_status_t mcl_link_frame_encode(
+    const mcl_link_frame_t *frame,
+    uint8_t *out,
+    size_t out_capacity,
+    size_t *written)
+{
+    size_t need;
+    size_t pos = 0u;
+    size_t i;
+
+    if (frame == NULL || out == NULL || written == NULL) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+    if (mcl_link_frame_encodable(frame) == 0u) {
+        return MCL_LINK_ERR_RANGE;
+    }
+
+    need = mcl_link_frame_encoded_size(frame);
+    if (out_capacity < need) {
+        return MCL_LINK_ERR_RANGE;
+    }
+
+    out[pos++] = (uint8_t)(((uint32_t)MCL_LINK_FRAME_MAJOR << 4u)
+                           | (uint32_t)frame->frame_class);
+    out[pos++] = frame->flags;
+
+    mcl_link_put_u32(out + pos, frame->source_ref);
+    pos += 4u;
+
+    if ((frame->flags & MCL_LINK_FLAG_DESTINATION) != 0u) {
+        mcl_link_put_u32(out + pos, frame->destination_ref);
+        pos += 4u;
+    }
+    if ((frame->flags & MCL_LINK_FLAG_SESSION) != 0u) {
+        mcl_link_put_u32(out + pos, frame->session_ref);
+        pos += 4u;
+    }
+    if ((frame->flags & MCL_LINK_FLAG_SEQUENCE) != 0u) {
+        mcl_link_put_u16(out + pos, frame->sequence);
+        pos += 2u;
+    }
+    if ((frame->flags & MCL_LINK_FLAG_FRESHNESS) != 0u) {
+        mcl_link_put_u16(out + pos, frame->freshness_ms);
+        pos += 2u;
+    }
+
+    mcl_link_put_u16(out + pos, frame->payload_len);
+    pos += 2u;
+
+    for (i = 0u; i < (size_t)frame->payload_len; ++i) {
+        out[pos + i] = frame->payload[i];
+    }
+    pos += (size_t)frame->payload_len;
+
+    if ((frame->flags & MCL_LINK_FLAG_INTEGRITY) != 0u) {
+        mcl_link_put_u32(out + pos, mcl_link_crc32(out, pos));
+        pos += 4u;
+    }
+
+    *written = pos;
+    return MCL_LINK_OK;
+}
+
+mcl_link_status_t mcl_link_frame_decode(
+    const uint8_t *in,
+    size_t in_size,
+    mcl_link_frame_t *frame,
+    size_t *consumed)
+{
+    size_t pos = 0u;
+    size_t optional;
+    uint8_t major, flags;
+    uint16_t payload_len;
+
+    if (in == NULL || frame == NULL || consumed == NULL) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+    if (in_size < (size_t)MCL_LINK_FRAME_MIN_SIZE) {
+        return MCL_LINK_ERR_RANGE;
+    }
+
+    major = (uint8_t)((in[0] >> 4u) & 0x0Fu);
+    if (major != (uint8_t)MCL_LINK_FRAME_MAJOR) {
+        return MCL_LINK_ERR_INCOMPATIBLE_VERSION;
+    }
+
+    frame->frame_class = (mcl_link_frame_class_t)(in[0] & 0x0Fu);
+    if (frame->frame_class >= MCL_LINK_CLASS_COUNT) {
+        /* Unknown meaning is rejected, never guessed. */
+        return MCL_LINK_ERR_RANGE;
+    }
+
+    flags = in[1];
+    if ((flags & MCL_LINK_FLAG_RESERVED) != 0u) {
+        /* Reserved bits must be zero for the encoding to be canonical. */
+        return MCL_LINK_ERR_RANGE;
+    }
+    frame->flags = flags;
+    pos = 2u;
+
+    optional = mcl_link_optional_size(flags);
+    if (in_size < (size_t)MCL_LINK_FRAME_MIN_SIZE + optional) {
+        return MCL_LINK_ERR_RANGE;
+    }
+
+    frame->source_ref = mcl_link_get_u32(in + pos);
+    pos += 4u;
+
+    frame->destination_ref = 0u;
+    frame->session_ref = 0u;
+    frame->sequence = 0u;
+    frame->freshness_ms = 0u;
+
+    if ((flags & MCL_LINK_FLAG_DESTINATION) != 0u) {
+        frame->destination_ref = mcl_link_get_u32(in + pos);
+        pos += 4u;
+    }
+    if ((flags & MCL_LINK_FLAG_SESSION) != 0u) {
+        frame->session_ref = mcl_link_get_u32(in + pos);
+        pos += 4u;
+    }
+    if ((flags & MCL_LINK_FLAG_SEQUENCE) != 0u) {
+        frame->sequence = mcl_link_get_u16(in + pos);
+        pos += 2u;
+    }
+    if ((flags & MCL_LINK_FLAG_FRESHNESS) != 0u) {
+        frame->freshness_ms = mcl_link_get_u16(in + pos);
+        pos += 2u;
+    }
+
+    payload_len = mcl_link_get_u16(in + pos);
+    pos += 2u;
+
+    if (payload_len > MCL_LINK_FRAME_MAX_PAYLOAD) {
+        return MCL_LINK_ERR_RANGE;
+    }
+    if (in_size - pos < (size_t)payload_len) {
+        return MCL_LINK_ERR_RANGE;
+    }
+
+    frame->payload_len = payload_len;
+    frame->payload = (payload_len != 0u) ? (in + pos) : NULL;
+    pos += (size_t)payload_len;
+
+    if ((flags & MCL_LINK_FLAG_INTEGRITY) != 0u) {
+        uint32_t received;
+        if (in_size - pos < 4u) {
+            return MCL_LINK_ERR_RANGE;
+        }
+        received = mcl_link_get_u32(in + pos);
+        if (received != mcl_link_crc32(in, pos)) {
+            return MCL_LINK_ERR_INTEGRITY;
+        }
+        pos += 4u;
+    }
+
+    *consumed = pos;
+    return MCL_LINK_OK;
+}

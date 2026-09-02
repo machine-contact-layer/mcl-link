@@ -84,7 +84,57 @@ LinkFrame {
 }
 ```
 
-Exact bit layout is delegated to MCL Wire / transport profile integration work.
+### 3.1 Canonical layout v0
+
+The layout is now defined. It was deliberately left open until an MCL frame had
+survived a physical channel, so that the mandatory fields are the ones contact
+actually needs rather than the ones that seemed likely in advance.
+
+All multi-byte fields are network byte order.
+
+```text
+u8   link_major (high nibble) | frame_class (low nibble)
+u8   flags
+u32  source_ref                       always
+u32  destination_ref                  if FLAG_DESTINATION (0x01)
+u32  session_ref                      if FLAG_SESSION     (0x02)
+u16  sequence                         if FLAG_SEQUENCE    (0x04)
+u16  freshness_ms                     if FLAG_FRESHNESS   (0x08)
+u16  payload_len                      always
+u8   payload[payload_len]
+u32  integrity (CRC-32/IEEE)          if FLAG_INTEGRITY   (0x10)
+```
+
+Minimum frame size is 8 bytes plus payload. `link_major` is 0 for this draft.
+Flag bits 5..7 are reserved.
+
+### 3.2 Decoding rules
+
+A conforming decoder MUST reject, never interpret:
+
+- a `link_major` it does not implement, as an incompatible version;
+- a `frame_class` outside the assigned set;
+- any frame with a reserved flag bit set, as non-canonical;
+- any buffer too short for the fields the flags declare;
+- a `payload_len` exceeding the profile maximum;
+- a frame whose `integrity` field is present and does not verify.
+
+Absence of an `integrity` field does not make a frame trusted. It makes it
+unverified. Carriage profiles decide whether to require the field, based on
+whether the underlying medium already provides equivalent detection.
+
+A decoder reports the exact number of bytes the frame occupied, so a reliable
+stream carriage can decode successive frames without rescanning. Trailing bytes
+after a complete frame are not an error at this layer; carriage profiles that
+forbid them enforce that against their own boundary.
+
+### 3.3 What the references mean
+
+`source_ref`, `destination_ref` and `session_ref` are contact correlation
+references. They are not identity, not authority, and not trust, and a receiver
+MUST NOT treat them as proof of any of those. `freshness_ms` bounds the useful
+lifetime of the payload after decode; it is not a clock and does not require
+synchronised time between peers.
 
 ## 4. Frame classes
 

@@ -22,6 +22,14 @@ if(MCL_LINK_BUILD_TESTS)
         C_EXTENSIONS NO)
     add_test(NAME mcl_link_test COMMAND mcl_link_test_link)
 
+    add_executable(mcl_link_test_frame tests/test_link_frame.c)
+    target_link_libraries(mcl_link_test_frame PRIVATE mcl_link)
+    set_target_properties(mcl_link_test_frame PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO)
+    add_test(NAME mcl_link_frame COMMAND mcl_link_test_frame)
+
     add_executable(mcl_link_validate_transport tools/validate_transport_registry.c)
     set_target_properties(mcl_link_validate_transport PROPERTIES
         C_STANDARD 99

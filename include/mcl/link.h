@@ -30,7 +30,8 @@ enum {
     MCL_LINK_ERR_INCOMPATIBLE_VERSION = 3,
     MCL_LINK_ERR_CONTEXT_MISMATCH = 4,
     MCL_LINK_ERR_NO_ACTIVE_CONTEXT = 5,
-    MCL_LINK_ERR_INVALID_STATE = 6
+    MCL_LINK_ERR_INVALID_STATE = 6,
+    MCL_LINK_ERR_INTEGRITY = 7
 };
 
 /* Contact / Link Lifecycle States */
@@ -104,8 +105,113 @@ uint8_t mcl_link_context_key_equals(
     const mcl_link_context_key_t *a,
     const mcl_link_context_key_t *b);
 
+/* ============================================================
+ * Link frame v0 (research draft)
+ *
+ * spec/link-v0.md section 3 defines the logical LinkFrame and leaves the bit
+ * layout to transport-profile integration. This is that layout, and it is the
+ * carriage unit every MCL transport binding maps onto its own medium.
+ *
+ * It was deliberately not defined until a frame had actually survived a
+ * physical channel, so that the mandatory fields are the ones contact really
+ * needs rather than the ones that seemed likely in advance.
+ *
+ * Canonical byte layout, network byte order:
+ *
+ *   u8   link_major (high nibble) | frame_class (low nibble)
+ *   u8   flags
+ *   u32  source_ref                         always present
+ *   u32  destination_ref                    if MCL_LINK_FLAG_DESTINATION
+ *   u32  session_ref                        if MCL_LINK_FLAG_SESSION
+ *   u16  sequence                           if MCL_LINK_FLAG_SEQUENCE
+ *   u16  freshness_ms                       if MCL_LINK_FLAG_FRESHNESS
+ *   u16  payload_len                        always present
+ *   u8   payload[payload_len]
+ *   u32  integrity (CRC-32/IEEE)            if MCL_LINK_FLAG_INTEGRITY
+ *
+ * Minimum frame is 8 bytes plus payload (class/version, flags, source_ref,
+ * payload_len). Decoding is strict: an unknown
+ * link_major, an unknown frame class, any reserved flag bit set, or a
+ * truncated buffer is rejected rather than interpreted. A frame carrying an
+ * integrity field whose CRC does not verify is rejected; a frame without one
+ * is not thereby trusted, only unverified.
+ *
+ * Reception of a frame is not identity, authority, or trust. source_ref and
+ * session_ref are contact references for correlation only, never proof.
+ * ============================================================ */
+
+#define MCL_LINK_FRAME_MAJOR        0u
+#define MCL_LINK_FRAME_MIN_SIZE     8u
+#define MCL_LINK_FRAME_MAX_PAYLOAD  1024u
+
+/* Frame classes, spec/link-v0.md section 4. */
+typedef uint8_t mcl_link_frame_class_t;
+enum {
+    MCL_LINK_CLASS_CONTACT     = 0u,
+    MCL_LINK_CLASS_CAPABILITY  = 1u,
+    MCL_LINK_CLASS_NEGOTIATION = 2u,
+    MCL_LINK_CLASS_DATA        = 3u,
+    MCL_LINK_CLASS_ACK         = 4u,
+    MCL_LINK_CLASS_NACK        = 5u,
+    MCL_LINK_CLASS_KEEPALIVE   = 6u,
+    MCL_LINK_CLASS_ADAPT       = 7u,
+    MCL_LINK_CLASS_HANDOFF     = 8u,
+    MCL_LINK_CLASS_CLOSE       = 9u,
+    MCL_LINK_CLASS_COUNT       = 10u
+};
+
+/* Optional-field flags. Bits 5..7 are reserved and MUST be zero. */
+#define MCL_LINK_FLAG_DESTINATION 0x01u
+#define MCL_LINK_FLAG_SESSION     0x02u
+#define MCL_LINK_FLAG_SEQUENCE    0x04u
+#define MCL_LINK_FLAG_FRESHNESS   0x08u
+#define MCL_LINK_FLAG_INTEGRITY   0x10u
+#define MCL_LINK_FLAG_RESERVED    0xE0u
+
+typedef struct {
+    mcl_link_frame_class_t frame_class;
+    uint8_t flags;
+    uint32_t source_ref;
+    uint32_t destination_ref;   /* meaningful only with MCL_LINK_FLAG_DESTINATION */
+    uint32_t session_ref;       /* meaningful only with MCL_LINK_FLAG_SESSION */
+    uint16_t sequence;          /* meaningful only with MCL_LINK_FLAG_SEQUENCE */
+    uint16_t freshness_ms;      /* meaningful only with MCL_LINK_FLAG_FRESHNESS */
+    const uint8_t *payload;     /* canonical Wire bytes; borrowed, never owned */
+    uint16_t payload_len;
+} mcl_link_frame_t;
+
+/* Exact encoded size of a frame, or 0 if the frame is not encodable. */
+size_t mcl_link_frame_encoded_size(const mcl_link_frame_t *frame);
+
+/*
+ * Encode a frame. The caller owns the output buffer; no allocation occurs.
+ * Writes the integrity field when MCL_LINK_FLAG_INTEGRITY is set.
+ */
+mcl_link_status_t mcl_link_frame_encode(
+    const mcl_link_frame_t *frame,
+    uint8_t *out,
+    size_t out_capacity,
+    size_t *written);
+
+/*
+ * Decode a frame. On success, frame->payload borrows from `in`, so it stays
+ * valid only as long as `in` does. `consumed` reports the exact frame length,
+ * which lets a stream carriage decode successive frames without re-scanning.
+ * Trailing bytes after a complete frame are not an error here; carriage
+ * profiles that forbid them check `consumed` against their own boundary.
+ */
+mcl_link_status_t mcl_link_frame_decode(
+    const uint8_t *in,
+    size_t in_size,
+    mcl_link_frame_t *frame,
+    size_t *consumed);
+
+/* CRC-32/IEEE over a byte range, as used by the integrity field. */
+uint32_t mcl_link_crc32(const uint8_t *data, size_t size);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* MCL_LINK_H */
+
