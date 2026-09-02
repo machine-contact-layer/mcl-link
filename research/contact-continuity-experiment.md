@@ -26,8 +26,39 @@ library:
 > establish that the machine on the second medium is the machine it met on the
 > first?
 
-Call this **contact continuity**. It is the property MCL owes itself, because no
-existing mechanism spans acoustic first contact and a later BLE or IP channel.
+Call this **cryptographic contact binding**. It is the property MCL owes itself,
+because no existing mechanism spans acoustic first contact and a later BLE or IP
+channel.
+
+**It must not be confused with ordinary session continuity**, which is the
+non-cryptographic Link property of correlating a logical MCL session across a
+transport change. That is what a known fleet, an open deployment, or any
+unauthenticated migration uses, it involves no cryptography, and it must be
+demonstrated *first and separately* — see §0.
+
+### 0. This experiment is not the next thing to build
+
+Ordering matters here, because getting it wrong would make the security work a
+hidden prerequisite for MCL itself.
+
+```text
+1. BASE MIGRATION        auth-free contact migration, AP -> BLE and AP -> WiFi2,
+   (build this first)    retaining logical MCL session state.
+                         Proves the project's actual central thesis.
+
+2. RESEARCH MODEL        this note and its companions. Text, not code.
+
+3. DEPENDENCY FEASIBILITY  host RFC 9529 vectors, code/RAM/stack measurement,
+                           then an ESP32-S3 build. Off the normative stack.
+
+4. THIS EXPERIMENT       only after 1-3.
+```
+
+Step 1 is the one that demonstrates what MCL is for. A machine that migrates a
+contact from acoustic to BLE with no cryptography at all is a complete, valid,
+useful MCL deployment, and until that path is demonstrated end to end, nothing
+here should be built. AP-B0 selection and independent-interoperability work
+continue in parallel rather than waiting on any of this.
 
 ## 2. The constraint that shapes everything
 
@@ -138,6 +169,35 @@ practice rather than only in the charter: a run in which G or H "passes" by
 granting more than it should would indicate the properties had quietly collapsed
 into one.
 
+### 6.1 Two cases that are primary experiments, not negative tests
+
+**I — Multi-peer cross-binding.** The machine hears two peers acoustically at
+the same time, both advertise BLE endpoints, and the attacker swaps which
+contact is associated with which endpoint:
+
+```text
+contact with Y  ->  endpoint of Z
+contact with Z  ->  endpoint of Y
+```
+
+Every session is cryptographically valid and no peer is impersonated; only the
+association is wrong. A binding scheme can pass A–H and still fail this, because
+proving that *a* contact is bound to *an* endpoint is not proving that *this*
+contact is bound to *this* endpoint. The environments MCL targets — a factory
+floor, a warehouse aisle, a loading bay, a junction — are dense multi-contact
+environments, so this is the realistic case rather than the two-party diagram
+every figure in this repository has so far assumed. **Test it with at least three
+real peers, not two plus a simulated one.**
+
+**J — Active first-medium MITM.** The attacker sits inside the acoustic contact
+rather than listening to it, and relays or cross-wires both peers'
+contributions. The expected result is that **this attack succeeds**, and the
+experiment must record that it does. Continuity binding defeats the passive
+observer and the migration race; it does not defeat an adversary that genuinely
+participated in the contact being bound. Running J and reporting the honest
+outcome is what prevents the eventual profile from claiming more than it
+delivers. A profile that omits this test will be read as defending against it.
+
 ## 7. What the experiment records
 
 Per charter §2.11, separately and never summarised:
@@ -177,6 +237,32 @@ No `trusted` boolean, on any interface, in any repository.
 - No session resumption, no 0-RTT, no long-lived pairing shortcut. Each adds
   replay surface and buys nothing before the fresh-contact flow is secure.
 
+### 8.1 An unresolved carriage question that blocks the experiment
+
+`mcl-link` documents the Link payload as canonical MCL Wire bytes. Key-exchange
+messages are **not** Wire semantic objects. Placing raw handshake bytes into
+`wire_payload` would make the frame misrepresent its own contents, and would
+quietly break the invariant that a Link payload decodes as Wire.
+
+This must be decided before the experiment, not during it.
+
+Do **not** create a permanent `SECURITY` Core category: that freezes a decision
+no evidence supports. For research, carry profile data through the existing
+extension machinery or a clearly experimental carrier in an experimental
+namespace, conceptually:
+
+```text
+PROFILE_NEGOTIATION {
+    experimental_profile
+    message_stage
+    opaque_profile_bytes
+}
+```
+
+If the experiment shows that generic profile-payload carriage is needed by many
+Link profiles, promote a general mechanism then — freeze it after evidence shows
+it is needed, which is the project's own rule.
+
 ## 9. Dependency evaluation gate
 
 Before any external key-exchange implementation is used, it must be assessed
@@ -188,8 +274,25 @@ as raw bytes, so a secure element or TrustZone can back them later; buildability
 for the ESP32-S3 target; and the current published errata for the specification
 it implements.
 
-`libedhoc` is the candidate to assess first. **That assessment has not been
-performed**, and this note does not claim it has.
+`libedhoc` is the candidate to assess first. **A full assessment has not been
+performed**, and this note does not claim it has. What is recorded so far —
+MIT licence, C11 rather than C99, zcbor plus a PSA/mbedTLS-backed crypto
+provider, key handles, selectable memory backends — is enough to settle one
+question only, and it settles it decisively:
+
+> `mcl-link` cannot depend on it, or on any cryptographic library. The
+> dependency lives behind a provider interface, in the experiment harness.
+
+That is the same conclusion the architecture reaches from first principles
+(charter §2.10.2, candidate note §3.1), which is a reason to be confident in it.
+Everything else in the list above remains open.
+
+A first laboratory benchmark should use a compact P-256 / static-DH
+configuration, whose published trace is roughly 39, 45 and 19 bytes across the
+three messages — tractable acoustically. Signature and certificate modes must
+also be measured, since published totals reach roughly 242 bytes and that
+difference is decisive over an acoustic channel. **This is a choice of
+instrument, not a cipher-suite recommendation.**
 
 ## 10. Success milestone
 

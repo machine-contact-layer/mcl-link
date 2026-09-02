@@ -4,9 +4,36 @@ Status: **Research Note** — non-normative, no mechanism is selected here.
 
 **Scope.** This note designs an *optional* security profile. Authentication is
 something MCL can be configured to carry, not something MCL requires or is for
-(Architecture Charter §2.10, §2.10.1). Deployments that broadcast to unknown
-listeners, or whose peers already know each other, are complete uses of MCL and
-face none of what follows.
+(Architecture Charter §2.10, §2.10.1).
+
+An earlier revision of this line said that deployments broadcasting to unknown
+listeners, or whose peers already know each other, "face none of what follows."
+**That was wrong and is corrected here.** Not needing *peer authentication* is
+not the same as not facing *adversaries*. Two warehouse robots built in the same
+factory may already hold each other's keys; that makes authentication easy and
+does nothing whatsoever to make the acoustic medium private. They still face
+passive listening, active injection, replay, denial of service, tracking and
+downgrade, and possibly a compromised insider that is legitimately provisioned.
+
+There are therefore three deployment postures, and only the third escapes this
+document:
+
+```text
+UNKNOWN-PEER SECURITY   no shared trust anchor; credential discovery
+                        may be required; §2 bounds what is achievable
+
+KNOWN-PEER SECURITY     keys or certificates already provisioned;
+                        authentication is cheap, but channel protection,
+                        replay defence and migration binding are not
+                        thereby solved
+
+NO SECURITY PROFILE     the deployment accepts the exposed medium as it is
+                        (§6 still governs what may be said on it)
+```
+
+Most of the adversaries in §3 apply to all three. What differs between the first
+two is only how peer identity is established, not what is being defended
+against.
 
 This note states what a secure MCL contact would have to withstand. It
 deliberately proposes no cryptography. A threat model written after a mechanism
@@ -82,10 +109,72 @@ merely watched. Nothing is forged and no cryptography is broken. This is the
 adversary that defeats any continuity scheme built on public values, and it is
 the specific reason for §5.2.
 
+**Active first-medium MITM.** Stronger than the passive misbinder, and the
+adversary a passive-observer test does *not* cover. Rather than watching the
+acoustic contact, the attacker sits in the middle of it and relays, replaces or
+cross-wires the cryptographic contributions themselves:
+
+```text
+X  <---->  attacker  <---->  Y
+```
+
+Both X and Y complete what looks like a correct exchange. Each is bound to the
+attacker. A continuity scheme that only proves "the peer on BLE holds secret
+state committed during the acoustic contact" is satisfied here, because the
+attacker genuinely did commit that state — to each victim separately. Defeating
+this needs something the attacker cannot relay, which on an open medium is a
+hard and possibly unsolved problem. **The honest position is that MCL does not
+currently defend against it, and must say so rather than implying that
+continuity binding covers it.**
+
+**Double misbinding.** Sethi, Peltonen and Aura showed formally that device
+pairing protocols can produce cryptographically valid sessions that are
+nevertheless associated with the wrong participant, including variants where two
+separate misbindings compose:
+
+```text
+legitimate A        compromised M        legitimate B
+
+every session individually valid
+the physical/contact association is wrong
+```
+
+Formal analyses of EDHOC have found related results, where a participant
+intending a session with one peer completes it with another trusted-but-
+compromised peer. Adopting a reviewed AKE does not by itself make MCL's
+composition immune, because the composition is ours.
+
+**Multi-peer cross-binding.** The variant that matters most in the environments
+MCL targets, and the reason it is listed separately rather than as an edge case
+of misbinding:
+
+```text
+X hears Y and Z acoustically, at the same time.
+Y and Z both advertise BLE endpoints.
+
+attacker swaps the association:
+    contact with Y  ->  endpoint of Z
+    contact with Z  ->  endpoint of Y
+```
+
+No key is broken and no peer is impersonated. Only the *pairing between a
+contact and an endpoint* is wrong. A factory floor, a warehouse aisle, a loading
+bay or a road junction is precisely a dense multi-contact environment, so this
+is the realistic case rather than the clean two-party one every diagram in this
+repository has so far assumed. **This should be a primary experiment, not a
+negative test appended to the end of one.**
+
 **Downgrade.** Forces peers to a weaker transport, a weaker security profile, or
 no security at all, by suppressing or altering capability advertisements.
 Especially dangerous during first contact, where capabilities are exchanged
 before any protection exists.
+
+Binding both peers' *complete* offers into an authenticated transcript detects
+alteration after the fact, but it does not cover the case where no security
+handshake ever happens: if an attacker suppresses every security advertisement
+and both peers simply proceed in the open, there is no later transcript in which
+the downgrade becomes visible. That gap is closed by local policy rather than by
+protocol — see §6.1.
 
 **Tracker.** Does not attack a session at all; correlates a machine's movements
 over time from anything stable it emits. A permanent serial number is the
@@ -124,13 +213,38 @@ against a passive listener and no authenticity against an active one. A verified
 manufacturer certificate establishes identity and says nothing about
 authorization. Proximity evidence survives none of the relay attack.
 
-## 5. Contact continuity is the property MCL uniquely owes
+## 5. Two different things have been called "contact continuity"
 
-The other properties have existing mechanisms MCL can adopt. Contact continuity
-is the one that arises from MCL's own structure, because MCL is the only layer
-that spans both transports.
+Earlier revisions used one phrase for two properties that must not be conflated.
+The conflation is dangerous in a specific way: it makes transport migration look
+as though it requires cryptography, when the overwhelming majority of MCL
+deployments will migrate transports with no security profile at all.
 
-The requirement is that after migration, both peers can establish:
+**Session continuity** is an ordinary Link property and involves no cryptography:
+
+```text
+AP contact  ->  migration  ->  BLE/IP contact
+
+"this is the logical MCL session I am continuing"
+```
+
+It is correlation, and it is exactly what a known fleet, an open deployment, or
+any unauthenticated migration needs. It is available today. It proves nothing
+about who the peer is, and it is not supposed to.
+
+**Cryptographic contact binding** is an optional security-profile property:
+
+```text
+"the peer that appeared on BLE possesses secret state
+ committed by the peer I met acoustically"
+```
+
+Only this second one is a security property, and only this one is what the rest
+of §5 discusses. Naming them apart matters more than the names chosen; a future
+profile should not be free to imply that migration without it is invalid.
+
+The requirement for the second is that after migration, both peers can
+establish:
 
 > the peer I am now talking to participated in the contact I just had.
 
@@ -195,6 +309,21 @@ that faithfully forwarded the original contact remains the same participant by
 this definition. Continuity and identity are separate rows in the table above
 and must stay separate.
 
+More seriously, **it does not defeat an active MITM on the first medium.** If
+the attacker sat in the middle of the acoustic contact rather than merely
+listening to it, then it genuinely committed secret state with each victim, and
+a binding proof of the form in §5.2 succeeds. Continuity binding defeats the
+passive observer and the transport-migration race. It does not defeat an
+adversary that was an active participant in the contact being bound.
+
+Nor does it defeat multi-peer cross-binding on its own: proving that *some*
+contact is bound to *some* endpoint is not the same as proving that this contact
+is bound to this endpoint, in an environment where several contacts and several
+endpoints are live at once.
+
+Both limits must be stated explicitly by any profile that claims continuity, or
+the claim will be read as more than it is.
+
 ## 6. Consequences for what first contact may carry
 
 From the passive listener and the tracker together:
@@ -214,6 +343,74 @@ rule is:
 > Sensitive data must not travel over an MCL channel until that channel has
 > earned the properties local policy requires — on any medium, acoustic, BLE or
 > IP alike.
+
+### 6.1 A local security floor, because negotiation cannot close downgrade
+
+Binding both peers' complete offers into an authenticated transcript makes
+*alteration* detectable. It does nothing about *absence*. An attacker that
+suppresses every security-capability advertisement leaves both peers seeing a
+plain, unremarkable open contact, and no handshake ever occurs in whose
+transcript the suppression could later surface.
+
+The defence is not protocol. It is that each machine knows, locally, what an
+operation costs:
+
+```text
+operation: READ_PUBLIC_INFO
+    minimum:  none
+
+operation: SHOW_PRIVATE_IDENTIFIER
+    minimum:  confidential, authenticated channel
+
+operation: UNLOCK_DOOR
+    minimum:  authenticated peer + authorized identity
+```
+
+> **A failed, absent or unavailable optional security negotiation MUST NOT
+> silently downgrade an operation whose local policy requires stronger
+> properties.**
+
+The correct outcome of a suppressed negotiation is that the contact proceeds
+perfectly normally and the privileged operation is refused. This is the rule
+that lets a deployment be trust-agnostic without being exploitable: an open
+contact is fine, and an open contact asking to unlock a door is not.
+
+EDHOC applies the same principle to cipher suites — its negotiation is
+authenticated by the transcript, and it recommends that endpoints enforce a
+minimum acceptable level rather than accept whatever is offered.
+
+### 6.2 Capability advertisement is itself a fingerprint
+
+The tracker adversary is usually discussed in terms of stable identifiers, but
+the *shape* of what a machine advertises is equally identifying. EDHOC's own
+security considerations make this point about stable external-authorization
+values, label usage, cipher-suite lists and connection identifiers: each can
+correlate sessions or fingerprint an application even when no identifier is
+stable.
+
+MCL's exposed first contact is a broadcast on an open medium, so this applies
+directly. A machine that acoustically announces its full capability and
+security-profile matrix is identifiable by that matrix alone, indefinitely,
+without ever being authenticated.
+
+The mitigation is already latent in the MachineCard design, which permits a
+digest or reference at bootstrap with the full card following later:
+
+```text
+EXPOSED CONTACT      presence, ephemeral contact ref, coarse capability,
+                     "richer negotiation supported"
+                              |
+                              v
+PROTECTED CHANNEL    full MachineCard, security capabilities,
+   (or explicit       credential formats, private transport details
+    deployment
+    choice)
+```
+
+A deployment may legitimately choose to advertise everything — an open hazard
+broadcaster has nothing to hide and every reason to be understood immediately.
+The point is that this should be a configured choice, and that the *default*
+should not leak a fingerprint.
 
 ## 7. What is already true in the codebase
 
@@ -249,6 +446,22 @@ nothing should be built that implies otherwise until a profile exists.
   repetition, BLE fragmentation and transport-local retries all mean two correct
   implementations can observe the same negotiation through different byte
   histories.
+- **What protects MCL traffic after a handshake completes.** An AKE yields keys;
+  it does not by itself define a protected record format. And the sensitive
+  fields are not only the payload — frame class, session reference, sequence,
+  handoff negotiation and transport selection are all security-relevant. This is
+  a real design gap, not a detail, and it is unowned today.
+- **Whether an active first-medium MITM is defensible at all** on an open
+  broadcast channel without an out-of-band anchor, or whether it must be
+  documented as out of scope. §5.3 currently says out of scope. That answer
+  should be reached deliberately rather than by omission.
+- How a contact is bound to *the correct* endpoint among several concurrent
+  contacts, which is the multi-peer cross-binding problem in §3.
+- Whether "bring your own cryptography" and cross-vendor interoperability can
+  both be served: a provider interface lets each builder supply its own
+  mechanism, but two strangers with no mechanism in common cannot negotiate at
+  all. That suggests a provider interface plus at least one fully specified
+  named profile, rather than either alone.
 - How a security profile is negotiated during first contact without that
   negotiation itself becoming the downgrade surface.
 - What a receive-only node can establish, given it cannot participate in a key
