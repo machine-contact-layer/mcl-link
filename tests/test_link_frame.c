@@ -69,7 +69,7 @@ static void test_all_optionals_round_trip(void)
     printf("[TEST] all optional fields round trip\n");
 
     memset(&tx, 0, sizeof(tx));
-    tx.frame_class = MCL_LINK_CLASS_NEGOTIATION;
+    tx.frame_class = MCL_LINK_CLASS_DATA;
     tx.flags = (uint8_t)(MCL_LINK_FLAG_DESTINATION | MCL_LINK_FLAG_SESSION |
                          MCL_LINK_FLAG_SEQUENCE | MCL_LINK_FLAG_FRESHNESS |
                          MCL_LINK_FLAG_FRAME_CHECK);

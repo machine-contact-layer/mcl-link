@@ -28,8 +28,8 @@ believe they decoded successfully.
 | Class | Value | Payload | Status |
 |---|---|---|---|
 | `CONTACT` | 0 | canonical Wire Tier-0 object | defined |
-| `CAPABILITY` | 1 | canonical Wire Tier-0 object | provisional — own contract pending |
-| `NEGOTIATION` | 2 | canonical Wire Tier-0 object | provisional — own contract pending |
+| `CAPABILITY` | 1 | Link capability control, 9 bytes | [link-negotiation-v1.md](link-negotiation-v1.md) |
+| `NEGOTIATION` | 2 | Link negotiation control, 7 bytes | [link-negotiation-v1.md](link-negotiation-v1.md) |
 | `DATA` | 3 | canonical Wire Tier-0 object | defined |
 | `ACK` | 4 | Link ACK control | defined here |
 | `NACK` | 5 | Link NACK control | defined here |
@@ -65,22 +65,26 @@ application-level semantics. Both decode identically.
 
 ### 3.2 CAPABILITY (1) and NEGOTIATION (2)
 
-Currently carry a Wire Tier-0 object, decoded exactly as `CONTACT` does.
+**Contracts now exist:** [`link-negotiation-v1.md`](link-negotiation-v1.md).
 
-**These are provisional.** The minimum capability exchange and the
-version/context controls both need their own Link control payloads, and when
-those exist these classes will carry them rather than a semantic object. They
-are recorded here as an open contract rather than frozen, because freezing them
-now would freeze a shape chosen before the thing that uses it exists.
+```text
+CAPABILITY   9 bytes   control_version, wire_majors, link_majors,
+                       max_frame, features
+NEGOTIATION  7 bytes   control_version, wire_major, link_major,
+                       max_frame, features
+```
 
-Until then, an implementation MUST NOT assume a Link control payload in these
-classes.
+Both are Link control payloads, exact-length, decoded like `ACK`, `NACK`,
+`HANDOFF` and `CLOSE` — **not** handed to the Wire Tier-0 decoder. The
+paragraph below records what they were before that contract existed, and no
+longer describes current behaviour at Link major 1.
 
-**Disposition for Link major 1:** these two classes cannot ship in this state.
-`link-class-disposition-v1.md` §3 requires that they either carry the minimum
-capability/version exchange's control payload, or become **reserved and
-refused** exactly as `ADAPT` is. A class that is accepted while its semantics
-are only implied is what a Stable major must not contain.
+**Historical note (Link major 0).** Before `link-negotiation-v1.md` existed
+these classes carried a Wire Tier-0 object decoded exactly as `CONTACT` does,
+and an implementation was told it MUST NOT assume a Link control payload in
+them. That state is what `link-class-disposition-v1.md` §3 called a transport
+with no contract. It is recorded rather than deleted, because a major-0 peer
+built against it exists in the evidence record.
 
 ### 3.3 ACK (4) and NACK (5)
 

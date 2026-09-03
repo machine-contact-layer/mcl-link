@@ -28,8 +28,8 @@ The four dispositions:
 | Class | Value | Disposition | Contract |
 |---|---:|---|---|
 | `CONTACT` | 0 | **Stable** | Canonical Wire Tier-0 object. §3.1 of `link-frame-classes-v0.1.md`. |
-| `CAPABILITY` | 1 | **Conditional — see §3** | Contract does not exist yet. |
-| `NEGOTIATION` | 2 | **Conditional — see §3** | Contract does not exist yet. |
+| `CAPABILITY` | 1 | **Stable** | Link capability control, 9 bytes. [`link-negotiation-v1.md`](link-negotiation-v1.md). |
+| `NEGOTIATION` | 2 | **Stable** | Link negotiation control, 7 bytes. Same specification. |
 | `DATA` | 3 | **Stable** | Canonical Wire Tier-0 object. Decodes identically to `CONTACT`; the distinction is intent. |
 | `ACK` | 4 | **Stable** | Fixed 4-byte control. Correlation by `acked_sequence`. |
 | `NACK` | 5 | **Stable** | Fixed 4-byte control, same layout, carries a reason. |
@@ -38,15 +38,19 @@ The four dispositions:
 | `HANDOFF` | 8 | **Stable** | `link-handoff-control-v0.1.md`. Carries the migration sequence proven by the E4 dual-radio evidence. |
 | `CLOSE` | 9 | **Stable** | Link CLOSE control. |
 
-Seven Stable, one reserved, two conditional. No class is excluded: every value
-0–9 is permanently allocated, and a reserved value is refused rather than
-recycled.
+**Nine Stable, one reserved.** No class is excluded: every value 0–9 is
+permanently allocated, and the reserved value is refused rather than recycled.
 
-## 3. `CAPABILITY` and `NEGOTIATION` — the only open entries
+This table was first written with `CAPABILITY` and `NEGOTIATION` conditional.
+The condition — §5.4 of the v1 scope — has since been met, so the fallback
+branch in §3 did not need to be taken. It is left in place as the record of
+what would have happened otherwise.
 
-### The problem, precisely
+## 3. `CAPABILITY` and `NEGOTIATION` — resolved
 
-Both classes are accepted today, and both are handed to the Wire decoder:
+### The problem, as it stood
+
+Both classes were accepted and handed to the Wire decoder:
 
 ```c
 /* mcl-sdk/src/sdk.c */
@@ -58,16 +62,26 @@ if (frame->frame_class != MCL_LINK_CLASS_CONTACT &&
 }
 ```
 
-So a received `CAPABILITY` frame is decoded as whatever Tier-0 object its
-payload happens to encode. There is no `CAPABILITY` semantic object — the seven
-Tier-0 objects do not include one — so the class has a *transport* but no
-*contract*. `link-frame-classes-v0.1.md` §3.2 states this honestly and tells
+A received `CAPABILITY` frame was therefore decoded as whatever Tier-0 object
+its payload happened to encode. There is no `CAPABILITY` semantic object — the
+seven Tier-0 objects do not include one — so the class had a *transport* but no
+*contract*. `link-frame-classes-v0.1.md` §3.2 stated this honestly and told
 implementations they MUST NOT assume a Link control payload in these classes.
 
-That is an acceptable state for major 0. It is exactly the state §3.4 of the
+That was an acceptable state for major 0. It is exactly the state §3.4 of the
 scope forbids at major 1: the class is accepted, and its semantics are implied.
 
-### The disposition is conditional on §5.4, and both branches are decided now
+### Resolved: §5.4 landed, so the first branch applies
+
+`mcl-link/spec/link-negotiation-v1.md` defines both control payloads, and
+`src/negotiation.c` implements them with `tests/test_negotiation.c` covering
+every obligation in its §8 — 4241 checks. Both classes are now Stable, carry
+Link control payloads, and are no longer handed to the Wire Tier-0 decoder.
+
+The analysis below is retained because it records why the class could not have
+shipped in its previous state, and what the fallback would have been.
+
+### The disposition was conditional on §5.4, and both branches were decided in advance
 
 ```text
 IF the minimum capability/version exchange (V1_SCOPE 5.4) lands before
@@ -131,8 +145,10 @@ and does not change.
 
 ## 6. What this document does not do
 
-- **It does not change any code.** Every disposition above except the two
-  conditional entries describes behaviour that already exists and is tested.
+- **It does not change the frame layout.** Every disposition above describes
+  behaviour that exists and is tested. Resolving §3 did change one thing in the
+  SDK: `CAPABILITY` and `NEGOTIATION` are no longer passed to the Tier-0
+  decoder, because they now carry Link control payloads.
 - **It does not cut Link major 1.** That is `V1_SCOPE.md` §5.8, and it happens
   after the meanings close.
 - **It does not settle `frame_check`.** The per-profile `frame_check`
