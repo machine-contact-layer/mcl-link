@@ -70,13 +70,49 @@ A control is carried as the **entire payload** of one Link frame whose
 - A `HANDOFF` frame MUST NOT carry anything other than a control.
 - The frame's `payload_len` delimits the control exactly. There is no length
   field inside the control and no padding.
-- The frame SHOULD set `MCL_LINK_FLAG_SESSION` with the same `session_ref` the
-  control carries. This is a redundancy the receiver MAY check, and a
-  disagreement between the two MUST be rejected. It is not a substitute for the
-  control's own `session_ref`: a frame's optional fields are selected by flags,
-  and a control must be interpretable from its own bytes.
-- Controls travel on the **candidate** transport, not the original one. That is
-  the point of validation: the sequence exists to prove the candidate works.
+- The frame **MUST** set `MCL_LINK_FLAG_SESSION`, and its `session_ref` MUST
+  equal the control's. A receiver MUST reject a `HANDOFF` frame that does not
+  set it, and MUST reject one whose two session references disagree.
+
+  This was a `SHOULD` in the first draft of this document, checked only when
+  the flag happened to be present. That made the field a multi-contact receiver
+  depends on for ROUTING optional. These controls arrive on the candidate
+  transport, which the contact has not been using, so a machine holding several
+  contacts must decide which one a freshly arrived frame belongs to *before* it
+  can parse a class-specific payload — otherwise generic frame routing has to
+  reach into every class's payload format, and every new class becomes a change
+  to the router. Requiring it costs four bytes on frames of 10 or 18 payload
+  bytes, on a transport just chosen for being better than the one where bytes
+  were scarce.
+
+  It is still not a substitute for the control's own `session_ref`: a frame's
+  optional fields are selected by flags, and a control must remain
+  interpretable from its own bytes.
+
+### 3.1 The transport a control is admissible on
+
+> A post-acceptance control MUST be transmitted on, and MUST have arrived on,
+> the transport the current transaction is being conducted over: the
+> **candidate** while a migration is in progress, the **active** transport
+> otherwise. A control arriving on any other transport MUST be refused.
+
+The first half is the point of validation — the sequence exists to prove the
+candidate works, and a control sent on the old path proves nothing about the
+new one.
+
+The second half is the half that is easy to omit and expensive to omit. A
+`PATH_RESPONSE` delivered over the **old** path, naming the right transaction
+and the right session and echoing the right challenge, is correct in every
+field. Nothing else in the sequence can detect it. Accepting it would declare a
+candidate reachable on the strength of bytes that never crossed it, which is the
+entire content of what path validation establishes. An implementation whose
+receive path does not know which transport bytes arrived on **cannot perform
+this check at all**, which is why it is stated as a carriage requirement rather
+than left to integration.
+
+The "active transport otherwise" clause covers the peer that has already
+completed the move: a `COMMIT` retransmitted after a lost `CONFIRM` arrives
+where that peer now lives, which is the transport it migrated to.
 
 ## 4. Canonical layout
 
@@ -179,10 +215,52 @@ unassigned one, which is the correct outcome and not a failure.
 | Operation | Accepted in | Result |
 |---|---|---|
 | `PATH_CHALLENGE` | `AGREED` | → `VALIDATING`, challenge recorded |
+| `PATH_CHALLENGE` | `VALIDATED` | duplicate — re-send `PATH_RESPONSE`, no change |
 | `PATH_RESPONSE` | `VALIDATING` | → `VALIDATED` if refs and echo match exactly |
+| `PATH_RESPONSE` | `VALIDATED` | duplicate — no change |
 | `COMMIT` | `VALIDATED` | → `ACTIVE` on the candidate directly; reply `CONFIRM` |
-| `COMMIT` | `ACTIVE` | retransmission only — see §8 |
+| `COMMIT` | `ACTIVE` | duplicate — re-send `CONFIRM`, no change; see §8 |
 | `CONFIRM` | `COMMITTING` | → `ACTIVE` on the candidate |
+| `CONFIRM` | `ACTIVE` | duplicate — no change |
+
+**Every operation has a duplicate row, and that is a requirement rather than a
+convenience.** On a lossy medium the only repair available is retransmission,
+so each control must be answerable a second time with the same outcome. An
+implementation that handles only the first copy of each works perfectly in a
+harness and strands a contact the first time a radio drops a frame.
+
+The duplicate rules, precisely:
+
+> A repeat of a control naming the SAME transaction and carrying the SAME
+> content MUST succeed and MUST change nothing. A repeat naming the same
+> transaction with DIFFERENT content MUST be refused.
+
+The second half matters as much as the first. A retransmitted `PATH_CHALLENGE`
+that carries a *different* challenge under a transaction already validated is
+not a retransmission — an honest one repeats itself — and echoing it would mean
+returning bytes of a third party's choosing on a path this machine has already
+committed to probing. It is answered with silence.
+
+`PATH_CHALLENGE` in `VALIDATED` is the row that was missing from the first
+draft, and it is the one a radio would have found first:
+
+```
+    A -> B   PATH_CHALLENGE
+             B echoes, reaching VALIDATED
+    B -> A   PATH_RESPONSE          LOST
+    A -> B   PATH_CHALLENGE         retransmission, correct behaviour
+             B is no longer in AGREED -> refused
+```
+
+One dropped frame, no adversary, both peers behaving correctly, and the
+migration is dead. The repair is the same as for the lost `CONFIRM` in §8:
+remember enough to give the same answer again.
+
+A duplicate acceptance deserves particular care and is covered by the contact
+state machine rather than by a control: it MUST NOT return a contact from
+`VALIDATING`, `VALIDATED` or `COMMITTING` to `AGREED`. A delayed copy of a step
+already completed would otherwise undo the progress made after it, and on a
+medium that reorders, a delayed copy is ordinary.
 
 **`COMMITTING` belongs to the sender of `COMMIT` alone.** A peer that receives
 `COMMIT` moves from `VALIDATED` to `ACTIVE` in one step and never occupies it.
@@ -279,6 +357,62 @@ the listener did not already hear.
 
 Retransmission of `PATH_CHALLENGE` and `PATH_RESPONSE` needs no such memory,
 because both are re-sendable from the state they are already in.
+
+### 8.2 When exactly a commit becomes irrevocable
+
+The rule in §8.1 is stated in terms of transmission, and transmission has an
+edge that an implementation has to get right:
+
+> A commit becomes irrevocable when the frame **may** have been transmitted, not
+> when it is known to have been. A sender MUST enter `COMMITTING` if its
+> transport reports success OR cannot report the outcome, and MUST NOT enter it
+> if the transport reports definitely that nothing was sent.
+
+Both halves matter and they fail in opposite directions.
+
+If an uncertain outcome did not commit, a sender could roll back over a frame
+the peer actually received — the split §8.1 exists to prevent, reached by a
+different route.
+
+If a definite failure did commit, a contact would be stranded irrevocably in
+`COMMITTING` over a frame that never left the machine: unable to roll back, and
+with nothing on the other side to confirm it.
+
+This has a consequence for the API shape, which is recorded because it is easy
+to get wrong: the state transition belongs to the **transmit operation**, not to
+a separate call the caller makes beforehand. An interface where the caller marks
+the contact committing and then asks the transport to send has already made the
+decision irrevocable before it knows whether there was anything to be
+irrevocable about.
+
+A transport that genuinely cannot distinguish the two MUST report uncertainty.
+Claiming certainty it does not have is the failure this rule exists to prevent,
+and retransmission is always safe: §8 makes every one of these controls
+idempotent.
+
+### 8.3 Ordinary traffic during the cutover
+
+Between the transmission of `COMMIT` and the arrival of `CONFIRM` the two peers
+genuinely disagree about which transport carries the contact. The receiver of a
+`COMMIT` is on the new transport immediately; the sender cannot know whether its
+`COMMIT` arrived. The asymmetry is inherent, not a defect.
+
+> From the transmission of `COMMIT` until `CONFIRM`, ordinary non-handoff
+> traffic for that contact MUST be quiesced, unless a profile explicitly defines
+> duplicate-safe transition behaviour. No profile does yet.
+
+Without this, a sender in `COMMITTING` continues to use `active_transport` and
+puts ordinary traffic onto a medium the peer may already have left — losing
+semantic operations while believing they were delivered.
+
+Quiescing rather than duplicating is the base rule because duplicating onto both
+media would deliver some operations twice, and nothing at this layer knows which
+operations are safe to repeat. That judgement belongs to the deployment (charter
+§2.10.1). The window is bounded by the `CONFIRM` exchange, which is the shortest
+it can be made without the sender guessing.
+
+Handoff controls are explicitly unaffected: completing that exchange is what
+ends the window.
 
 ## 9. Why there is no ABORT
 

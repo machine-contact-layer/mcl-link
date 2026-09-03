@@ -195,7 +195,9 @@ static void test_acoustic_to_ble_migration(void)
     mcl_contact_t initiator;
     mcl_contact_t responder;
     uint8_t transport = 0u;
-    mcl_link_state_t link_state = 0u;
+    uint8_t control_transport = 0u;
+    uint8_t quiesced = 0u;
+    uint8_t migrating = 0u;
 
     CHECK_STATUS(mcl_contact_begin(&initiator, MCL_CONTACT_ROLE_INITIATOR,
                                    0xA1A1A1A1u, MCL_CONTACT_TRANSPORT_AP), MCL_LINK_OK);
@@ -219,9 +221,21 @@ static void test_acoustic_to_ble_migration(void)
     CHECK_STATUS(mcl_contact_active_transport(&initiator, &transport), MCL_LINK_OK);
     CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_AP);
 
-    /* Link lifecycle tracks the contact machine rather than drifting from it. */
-    CHECK_STATUS(mcl_contact_link_state(&initiator, &link_state), MCL_LINK_OK);
-    CHECK_TRUE(link_state == MCL_LINK_STATE_HANDOFF);
+    /*
+     * The contact now spans TWO transports, and which one a frame goes on
+     * depends on what the frame is. Ordinary traffic still belongs on the
+     * acoustic path; the handoff controls belong on the candidate, because
+     * their whole purpose is to establish it.
+     */
+    CHECK_STATUS(mcl_contact_migration_active(&initiator, &migrating), MCL_LINK_OK);
+    CHECK_TRUE(migrating == 1u);
+    CHECK_STATUS(mcl_contact_control_transport(&initiator, &control_transport),
+                 MCL_LINK_OK);
+    CHECK_TRUE(control_transport == MCL_CONTACT_TRANSPORT_BLE);
+    CHECK_STATUS(mcl_contact_data_transport(&initiator, &transport, &quiesced),
+                 MCL_LINK_OK);
+    CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_AP);
+    CHECK_TRUE(quiesced == 0u);
 
     /* Probe the candidate path in both directions before trusting it. */
     CHECK_STATUS(mcl_contact_validation_begin(&initiator, CHALLENGE_A), MCL_LINK_OK);
@@ -236,6 +250,17 @@ static void test_acoustic_to_ble_migration(void)
     CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_AP);
 
     CHECK_STATUS(mcl_contact_commit_begin(&initiator), MCL_LINK_OK);
+
+    /*
+     * Between COMMIT and CONFIRM the peers genuinely disagree about which
+     * transport carries the contact, and the sender cannot find out. Ordinary
+     * traffic is quiesced for that window rather than being sent onto a medium
+     * the peer may already have left.
+     */
+    CHECK_STATUS(mcl_contact_data_transport(&initiator, &transport, &quiesced),
+                 MCL_LINK_OK);
+    CHECK_TRUE(quiesced == 1u);
+
     CHECK_STATUS(mcl_contact_commit_confirm(&initiator, MIG_A, SESS), MCL_LINK_OK);
     CHECK_STATUS(mcl_contact_commit_begin(&responder), MCL_LINK_OK);
     CHECK_STATUS(mcl_contact_commit_confirm(&responder, MIG_A, SESS), MCL_LINK_OK);
@@ -243,8 +268,17 @@ static void test_acoustic_to_ble_migration(void)
     CHECK_STATUS(mcl_contact_active_transport(&initiator, &transport), MCL_LINK_OK);
     CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_BLE);
     CHECK_TRUE(initiator.migration_count == 1u);
-    CHECK_STATUS(mcl_contact_link_state(&initiator, &link_state), MCL_LINK_OK);
-    CHECK_TRUE(link_state == MCL_LINK_STATE_ESTABLISHED);
+    CHECK_STATUS(mcl_contact_migration_active(&initiator, &migrating), MCL_LINK_OK);
+    CHECK_TRUE(migrating == 0u);
+    CHECK_STATUS(mcl_contact_data_transport(&initiator, &transport, &quiesced),
+                 MCL_LINK_OK);
+    CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_BLE);
+    CHECK_TRUE(quiesced == 0u);
+    /* With nothing outstanding, a retransmitted COMMIT arrives where the
+     * contact now lives. */
+    CHECK_STATUS(mcl_contact_control_transport(&initiator, &control_transport),
+                 MCL_LINK_OK);
+    CHECK_TRUE(control_transport == MCL_CONTACT_TRANSPORT_BLE);
 
     /* The reference learned acoustically survives the move: same contact. */
     CHECK_TRUE(initiator.peer_ref == 0xB2B2B2B2u);
@@ -335,10 +369,28 @@ static void test_path_validation(void)
     CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_OK);
     CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_AP);
     CHECK_TRUE(c.migration_count == 0u);
-    CHECK_TRUE(c.session_valid == 0u);
 
-    /* The abandoned session reference must not be usable afterwards. */
+    /*
+     * The session reference SURVIVES the failed migration. It names the
+     * continuing logical contact, and the contact did not fail -- only the
+     * attempt to move it did. A peer that missed the abandonment must still be
+     * able to tell this contact from a new one.
+     */
+    CHECK_TRUE(c.session_valid == 1u);
+    CHECK_TRUE(c.session_ref == SESS);
+
+    /* The abandoned TRANSACTION is gone, so the sequence cannot resume. */
     CHECK_STATUS(mcl_contact_validation_begin(&c, CHALLENGE_A), MCL_LINK_ERR_INVALID_STATE);
+    CHECK_TRUE(c.pending_migration_ref == MCL_CONTACT_MIGRATION_NONE);
+
+    /* A later migration must reuse the same session reference, not choose a
+     * new one. */
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_B, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xE0u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_B, MCL_CONTACT_TRANSPORT_IP, 1u,
+                                   SESS + 1u), MCL_LINK_ERR_CONTEXT_MISMATCH);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_B, MCL_CONTACT_TRANSPORT_IP, 1u,
+                                   SESS), MCL_LINK_OK);
 }
 
 /*
@@ -472,7 +524,11 @@ static void test_refusals(void)
     CHECK_STATUS(mcl_contact_abandon_migration(NULL), MCL_LINK_ERR_INVALID_ARGUMENT);
     CHECK_STATUS(mcl_contact_close(NULL), MCL_LINK_ERR_INVALID_ARGUMENT);
     CHECK_STATUS(mcl_contact_active_transport(NULL, NULL), MCL_LINK_ERR_INVALID_ARGUMENT);
-    CHECK_STATUS(mcl_contact_link_state(NULL, NULL), MCL_LINK_ERR_INVALID_ARGUMENT);
+    CHECK_STATUS(mcl_contact_migration_active(NULL, NULL), MCL_LINK_ERR_INVALID_ARGUMENT);
+    CHECK_STATUS(mcl_contact_control_transport(NULL, NULL), MCL_LINK_ERR_INVALID_ARGUMENT);
+    CHECK_STATUS(mcl_contact_data_transport(NULL, NULL, NULL), MCL_LINK_ERR_INVALID_ARGUMENT);
+    CHECK_STATUS(mcl_contact_challenge_repeat(NULL, MIG_A, SESS, CHALLENGE_A, NULL),
+                 MCL_LINK_ERR_INVALID_ARGUMENT);
     CHECK_STATUS(mcl_contact_resolve_offer_collision(NULL, 1u, MIG_A,
                                                      MCL_CONTACT_TRANSPORT_BLE, 1u, 1u, 1u,
                                                      &outcome), MCL_LINK_ERR_INVALID_ARGUMENT);
@@ -522,9 +578,20 @@ static void test_refusals(void)
 
     CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE, 1u, SESS),
                  MCL_LINK_OK);
-    /* Agreeing twice would restart a transaction already in flight. */
+    /*
+     * Agreeing twice with the SAME transaction is a retransmitted acceptance,
+     * which is ordinary on a lossy medium: accepted, and it changes nothing.
+     * An earlier revision refused it, which turned a dropped frame into a
+     * failed migration.
+     */
     CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE, 1u, SESS),
-                 MCL_LINK_ERR_INVALID_STATE);
+                 MCL_LINK_OK);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_AGREED);
+    /* Agreeing again to something DIFFERENT is still refused. */
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_B, MCL_CONTACT_TRANSPORT_BLE, 1u, SESS),
+                 MCL_LINK_ERR_CONTEXT_MISMATCH);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u, SESS),
+                 MCL_LINK_ERR_CONTEXT_MISMATCH);
 
     CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_OK);
     CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_AP);
@@ -534,7 +601,7 @@ static void test_closed_contact_is_inert(void)
 {
     mcl_contact_t c;
     uint8_t transport = 0u;
-    mcl_link_state_t link_state = 0u;
+    uint8_t quiesced = 0u;
 
     CHECK_STATUS(mcl_contact_begin(&c, MCL_CONTACT_ROLE_INITIATOR, 5u,
                                    MCL_CONTACT_TRANSPORT_BLE), MCL_LINK_OK);
@@ -553,8 +620,10 @@ static void test_closed_contact_is_inert(void)
     CHECK_STATUS(mcl_contact_set_peer_ref(&c, 7u), MCL_LINK_ERR_INVALID_STATE);
     CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_ERR_INVALID_STATE);
     CHECK_TRUE(c.session_valid == 0u);
-    CHECK_STATUS(mcl_contact_link_state(&c, &link_state), MCL_LINK_OK);
-    CHECK_TRUE(link_state == MCL_LINK_STATE_CLOSED);
+    /* A closed contact has no transport for anything. */
+    CHECK_STATUS(mcl_contact_control_transport(&c, &transport), MCL_LINK_ERR_INVALID_STATE);
+    CHECK_STATUS(mcl_contact_data_transport(&c, &transport, &quiesced),
+                 MCL_LINK_ERR_INVALID_STATE);
 }
 
 /* Repeated migration must be stable rather than accumulating state. */
@@ -570,7 +639,13 @@ static void test_repeated_migration(void)
         const uint8_t target = ((i & 1u) == 0u)
             ? MCL_CONTACT_TRANSPORT_BLE
             : MCL_CONTACT_TRANSPORT_IP;
-        run_full_migration(&c, MIG_A + i, target, 1u, SESS + i);
+        /*
+         * The SAME session reference every hop. It names the continuing logical
+         * contact, so it must survive each move rather than rotating with it.
+         * An earlier revision passed SESS + i here, which quietly asserted the
+         * opposite model.
+         */
+        run_full_migration(&c, MIG_A + i, target, 1u, SESS);
         CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_OK);
         CHECK_TRUE(transport == target);
     }
@@ -774,6 +849,121 @@ static void test_observer_is_indistinguishable(void)
     CHECK_TRUE(victim.migration_count == 1u);
 }
 
+/*
+ * EVERY CONTROL MUST SURVIVE BEING SENT TWICE.
+ *
+ * On a lossy medium the only repair is retransmission, so a peer that handles
+ * only the first copy of each control works in a harness and strands a contact
+ * the first time a radio drops a frame. The lost CONFIRM was fixed earlier;
+ * this is the same defect at every other step.
+ *
+ * The one that actually bites is the lost PATH_RESPONSE. B echoes a challenge,
+ * reaching VALIDATED, and the echo is lost. A retransmits PATH_CHALLENGE --
+ * correctly. B has left AGREED, so a state machine that accepts a challenge
+ * only in AGREED refuses it, and the migration dies with both peers behaving
+ * correctly and no adversary present.
+ */
+static void test_every_control_survives_duplication(void)
+{
+    mcl_contact_t a;
+    mcl_contact_t b;
+    uint8_t reecho = 0u;
+    uint8_t reconfirm = 0u;
+
+    CHECK_STATUS(mcl_contact_begin(&a, MCL_CONTACT_ROLE_INITIATOR, 0xA0u,
+                                   MCL_CONTACT_TRANSPORT_BLE), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_begin(&b, MCL_CONTACT_ROLE_RESPONDER, 0xB0u,
+                                   MCL_CONTACT_TRANSPORT_BLE), MCL_LINK_OK);
+
+    /* Duplicate OFFER: identical is accepted and changes nothing. */
+    CHECK_STATUS(mcl_contact_record_offer(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_record_offer(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_OFFERED);
+    /* Same reference, different content: a second offer wearing the first
+     * one's name, and there is no correct way to merge the two. */
+    CHECK_STATUS(mcl_contact_record_offer(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xD00D0002u, 30u),
+                 MCL_LINK_ERR_CONTEXT_MISMATCH);
+    CHECK_STATUS(mcl_contact_record_offer(&b, MIG_A, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+
+    /* Duplicate ACCEPT: accepted, and it must not move anything backwards. */
+    CHECK_STATUS(mcl_contact_agree(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u, SESS),
+                 MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u, SESS),
+                 MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&b, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u, SESS),
+                 MCL_LINK_OK);
+
+    /* B is challenged and echoes; its PATH_RESPONSE is then lost. */
+    CHECK_STATUS(mcl_contact_validation_begin(&b, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&b, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+    CHECK_TRUE(b.state == MCL_CONTACT_STATE_VALIDATED);
+
+    /*
+     * A retransmits the SAME challenge. B must answer it again. Before
+     * mcl_contact_challenge_repeat existed this was refused and the migration
+     * ended here.
+     */
+    CHECK_STATUS(mcl_contact_challenge_repeat(&b, MIG_A, SESS, CHALLENGE_A,
+                                              &reecho), MCL_LINK_OK);
+    CHECK_TRUE(reecho == 1u);
+    CHECK_TRUE(b.state == MCL_CONTACT_STATE_VALIDATED);
+
+    /*
+     * A DIFFERENT challenge under the same transaction is answered with
+     * silence. An honest retransmission repeats itself; this is either a bug
+     * or someone asking to have bytes of their choosing echoed back on a path
+     * already validated.
+     */
+    CHECK_STATUS(mcl_contact_challenge_repeat(&b, MIG_A, SESS, CHALLENGE_B,
+                                              &reecho), MCL_LINK_OK);
+    CHECK_TRUE(reecho == 0u);
+    /* Wrong transaction: also silence. */
+    CHECK_STATUS(mcl_contact_challenge_repeat(&b, MIG_B, SESS, CHALLENGE_A,
+                                              &reecho), MCL_LINK_OK);
+    CHECK_TRUE(reecho == 0u);
+
+    /* A completes its own half, then receives a duplicate PATH_RESPONSE. */
+    CHECK_STATUS(mcl_contact_validation_begin(&a, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&a, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_VALIDATED);
+    CHECK_STATUS(mcl_contact_validation_response(&a, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_VALIDATED);
+    /* A duplicate echoing something else is not a duplicate. */
+    CHECK_STATUS(mcl_contact_validation_response(&a, MIG_A, SESS, CHALLENGE_B),
+                 MCL_LINK_ERR_CONTEXT_MISMATCH);
+
+    /* A late duplicate ACCEPT must not drag either peer back to AGREED. */
+    CHECK_STATUS(mcl_contact_agree(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u, SESS),
+                 MCL_LINK_OK);
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_VALIDATED);
+
+    /* COMMIT and CONFIRM, then duplicates of both. */
+    CHECK_STATUS(mcl_contact_commit_accept(&b, MIG_A, SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_repeat(&b, MIG_A, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 1u);
+
+    CHECK_STATUS(mcl_contact_commit_begin(&a), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_confirm(&a, MIG_A, SESS), MCL_LINK_OK);
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_ACTIVE);
+    /* Duplicate CONFIRM of the migration that just completed. */
+    CHECK_STATUS(mcl_contact_commit_confirm(&a, MIG_A, SESS), MCL_LINK_OK);
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_ACTIVE);
+    CHECK_TRUE(a.migration_count == 1u);
+    /* A CONFIRM from ACTIVE naming anything else is confirming a migration
+     * this machine never agreed to. */
+    CHECK_STATUS(mcl_contact_commit_confirm(&a, MIG_B, SESS),
+                 MCL_LINK_ERR_CONTEXT_MISMATCH);
+    CHECK_TRUE(a.migration_count == 1u);
+}
+
 int main(void)
 {
     test_acoustic_to_ble_migration();
@@ -790,6 +980,7 @@ int main(void)
     test_commit_repeat_is_narrow();
     test_commit_is_irrevocable_once_sent();
     test_commit_accept_never_enters_committing();
+    test_every_control_survives_duplication();
     test_observer_is_indistinguishable();
 
     printf("mcl_link_contact: %d checks passed\n", g_checks);

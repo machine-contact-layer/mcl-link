@@ -101,6 +101,10 @@ offset  size  field
 - **Wrong state** — none; both are valid whenever the named frame could have
   been received.
 
+For `ACK`, `reason` MUST be 0, and a receiver MUST reject an `ACK` whose reason
+is not 0. A field with no defined meaning that a decoder accepts anyway is where
+an undocumented sub-protocol starts.
+
 #### `acked_sequence` is not the frame's own `sequence`
 
 These are two different numbers and MUST NOT be conflated:
@@ -121,25 +125,88 @@ happened**, and cost real time to diagnose as an instrument fault. A
 correlation field turns that from a mystery into a mismatch the receiver detects
 on the first frame.
 
+#### What may be acknowledged at all
+
+> `ACK` and `NACK` correlate **only** a frame that was successfully framed and
+> whose `SEQUENCE` field was present and valid. A frame that fails before that
+> point is dropped locally, and the carriage resynchronises. **No `NACK` is
+> sent.**
+
+This is a correction of an earlier draft of this document, which listed
+`MALFORMED`, `TRUNCATED`, `UNSUPPORTED_VERSION`, `UNSUPPORTED_CLASS` and
+`FRAME_CHECK_FAILED` as `NACK` reasons. Every one of those is unsendable, for
+the same reason in five forms:
+
+**A receiver that rejects a frame cannot quote a trustworthy `acked_sequence`
+from it.**
+
+- An unsupported `link_major` is rejected *before* the receiver is entitled to
+  interpret any later field. Reading bytes 2–3 as "this version's sequence" is
+  exactly the interpretation the version check just forbade. "NACK sequence 42,
+  unsupported version" is a self-contradiction: the 42 was read under a version
+  the receiver said it does not implement.
+- A truncated frame may not contain the sequence field at all.
+- A frame whose CRC failed has no field a receiver may rely on, including that
+  one — the CRC failing is the statement that its bytes are not what was sent.
+- A malformed frame has no defined field positions.
+- An unimplemented class is rejected by the header, before any payload contract
+  applies.
+
+There is a second reason, and it would be sufficient on its own. Nothing at
+this layer is authenticated, and the media are open. A rule that answers
+malformed bytes with a frame turns any transmitter in range into a source of
+replies from every MCL node that hears it — an amplification and reflection
+primitive obtained by transmitting noise. Answering only well-formed,
+correlated frames removes it.
+
 #### NACK reasons
+
+Every reason below describes a frame that was **valid** and was **refused**.
 
 | Value | Name | Meaning |
 |---|---|---|
 | 0 | RESERVED | never sent; a zeroed payload is not a valid NACK |
-| 1 | MALFORMED | these bytes can never be a valid frame |
-| 2 | TRUNCATED | the frame ended early; more bytes might have completed it |
-| 3 | UNSUPPORTED_VERSION | the Link major or a control version is not implemented |
-| 4 | UNSUPPORTED_CLASS | the frame class is not implemented or is reserved |
-| 5 | FRAME_CHECK_FAILED | the CRC did not verify |
-| 6 | PAYLOAD_REFUSED | the frame was well formed; its payload violated its class contract |
-| 7 | POLICY_REFUSED | the deployment declined. **Not an error** — a policy outcome, and interoperable behaviour |
-
-For `ACK`, `reason` MUST be 0.
+| 1 | PAYLOAD_REFUSED | the frame was well formed; its payload violated its class contract |
+| 2 | POLICY_REFUSED | the deployment declined. **Not an error** — a policy outcome, and interoperable behaviour |
+| 3 | RESOURCE_EXHAUSTED | no capacity to accept it now. The same frame may succeed later |
+| 4 | STATE_REFUSED | not admissible in the receiver's current state |
+| 5 | UNSUPPORTED_SEMANTIC | the payload decoded and named something this receiver does not implement |
 
 `POLICY_REFUSED` is deliberately distinct. Two correctly implemented peers with
 different configurations refuse each other at different points, and that is a
 policy outcome rather than an interoperability failure (charter §2.10.1). A peer
 must be able to say so without claiming the other sent something wrong.
+
+`RESOURCE_EXHAUSTED` is distinct from all of them because it is the only one
+where **retrying the identical frame is sensible**. Collapsing it into
+`PAYLOAD_REFUSED` would make a sender treat a full buffer as a permanent
+protocol error.
+
+#### Sequence wrap and the acknowledgement window
+
+`sequence` is 16-bit and wraps at 65536. Once a 16-bit `acked_sequence` is
+normative, wrap stops being cosmetic: a delayed acknowledgement of sequence 7
+is indistinguishable from an acknowledgement of the sequence 7 that comes 65536
+frames later, and a sender that accepts the wrong one believes a frame arrived
+that never did.
+
+The rule, which is RFC 1982 serial-number arithmetic bounded well inside half
+the space:
+
+> An implementation MUST NOT have more than **16384** frames outstanding and
+> unacknowledged on one contact. An `acked_sequence` is interpreted relative to
+> the highest sequence sent: it names a live frame only if it lies within that
+> window, going backwards. Anything else MUST be discarded rather than matched.
+
+16384 is a quarter of the space rather than the half RFC 1982 permits, because
+the boundary case at exactly half is ambiguous by construction, and a limit that
+is ambiguous at its own edge is a limit an implementer will get wrong. Nothing
+in MCL needs 16384 frames in flight; a contact that does has a queueing problem
+this field cannot fix.
+
+The sequence space is scoped to the **contact** and starts at 0 when the contact
+begins. It is not reset by a migration: the contact continues across one, and so
+does its numbering, for the same reason `session_ref` does.
 
 ### 3.4 KEEPALIVE (6)
 
@@ -189,7 +256,22 @@ One addition from this audit, for multi-contact routing:
 
 > A `HANDOFF` frame carrying a post-acceptance control (`PATH_CHALLENGE`,
 > `PATH_RESPONSE`, `COMMIT`, `CONFIRM`) MUST set `MCL_LINK_FLAG_SESSION`, and
-> its `session_ref` MUST equal the control's.
+> its `session_ref` MUST equal the control's. A receiver MUST reject a
+> post-acceptance `HANDOFF` frame that does not set it — not merely decline to
+> check it when absent.
+
+A second requirement, from the same audit:
+
+> A post-acceptance `HANDOFF` frame MUST be transmitted on, and MUST have
+> arrived on, the transport the current transaction is being conducted over —
+> the candidate while a migration is in progress, the active transport
+> otherwise. A control arriving on any other transport MUST be refused.
+
+Without that rule a `PATH_RESPONSE` delivered over the **old** path validates a
+candidate that has never carried a byte. Every reference in such a frame is
+correct, so nothing else in the sequence can detect it, and demonstrating that
+the candidate carries traffic in both directions is the entire content of path
+validation.
 
 The reason is dispatch. These controls arrive on the **candidate** transport,
 which the contact has not been using. A machine holding several contacts must
@@ -205,10 +287,18 @@ chosen for being better than the one where bytes were scarce.
 
 ### `sequence`
 
-16-bit, wraps at 65536, advisory. Link performs no reordering, no
-retransmission and no duplicate suppression — it names frames so that layers
-which do can. A receiver MUST NOT infer loss from a gap: transports below MCL
-reorder and drop, and MCL-AP has no delivery guarantee at all.
+16-bit, contact-scoped, starting at 0 and wrapping at 65536. Link performs no
+reordering, no retransmission and no duplicate suppression — it names frames so
+that layers which do can. A receiver MUST NOT infer loss from a gap: transports
+below MCL reorder and drop, and MCL-AP has no delivery guarantee at all.
+
+Wrap is handled by the acknowledgement window in §3.3, which is the only place
+a sequence is compared against another.
+
+A sequence number is consumed by any frame that **may** have been transmitted,
+not only by one confirmed sent. A transport that cannot report the outcome of a
+transmission may still have transmitted it, and reusing the ordinal would give
+two different frames one name.
 
 ### `freshness_ms`
 
@@ -253,6 +343,11 @@ Classes 10–15 remain unassigned and rejected, as before.
 
 Defined here: `ACK`, `NACK`, `KEEPALIVE`, `CLOSE`, and the `HANDOFF` session
 requirement. Reserved: `ADAPT`.
+
+Corrected here since the first draft: the `NACK` reason set, which previously
+included five reasons a receiver cannot send because it has no trustworthy
+`acked_sequence` to put in them; and the sequence wrap rule, which previously
+said only that the field wraps.
 
 Still open before a stable Link major:
 

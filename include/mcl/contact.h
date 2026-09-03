@@ -100,10 +100,37 @@ enum {
     MCL_CONTACT_ROLE_RESPONDER = 1u
 };
 
+/*
+ * WHAT THIS STATE MACHINE IS, AND WHAT IT IS NOT
+ *
+ * It is a TRANSPORT-CONTINUITY machine and nothing else. Each state answers one
+ * question: which medium carries this contact, and is a change of medium under
+ * way?
+ *
+ * It does NOT describe the Link lifecycle (mcl_link_state_t) and does not map
+ * onto it. Those two answer different questions -- "have we discovered,
+ * exchanged capabilities and negotiated?" versus "which transport are we on?"
+ * -- and neither implies the other. A machine can be settled on a transport
+ * having negotiated nothing, and can be mid-negotiation without any migration.
+ *
+ * An earlier revision provided mcl_contact_link_state(), which claimed a
+ * mapping between the two. It has been REMOVED. A function that tells you what
+ * one state machine "ought" to look like, next to a second machine that is
+ * independently mutable, is a third source of truth that drifts from both. The
+ * single place the two genuinely cross is owned by the SDK and stated in
+ * spec/link-contact-ownership-v0.1.md.
+ */
 typedef uint8_t mcl_contact_state_t;
 enum {
     MCL_CONTACT_STATE_NONE       = 0u,  /* not begun */
-    MCL_CONTACT_STATE_ACTIVE     = 1u,  /* live on active_transport */
+    /*
+     * Settled on active_transport with no migration in progress.
+     *
+     * This asserts nothing about negotiation, capabilities, identity or trust.
+     * It is true from the moment a contact is begun, because a machine is
+     * always on some medium and is not always changing it.
+     */
+    MCL_CONTACT_STATE_ACTIVE     = 1u,
     MCL_CONTACT_STATE_OFFERED    = 2u,  /* a transport change is proposed */
     MCL_CONTACT_STATE_AGREED     = 3u,  /* accepted; candidate not yet proven */
     MCL_CONTACT_STATE_VALIDATING = 4u,  /* challenge outstanding on the candidate */
@@ -141,6 +168,30 @@ enum {
  *
  * None is identity. None is authorization. A Wire context_id is a fifth,
  * separate thing and must never be copied into session_ref.
+ *
+ *
+ * SESSION_REF LIFETIME: ONE VALUE FOR THE LIFE OF THE CONTACT
+ *
+ * Two models were possible and only one can be true:
+ *
+ *   A. session_ref names the continuing logical contact and persists across
+ *      every migration.
+ *   B. session_ref names one transport epoch and rotates on each hop.
+ *
+ * MCL chooses A, and enforces it: the value is bound by the first acceptance
+ * and mcl_contact_agree REFUSES a later acceptance that names a different one.
+ *
+ * A is chosen because continuity across a change of medium is the property this
+ * whole module exists to provide, and under B the identifier that is supposed
+ * to express it changes exactly when it is needed. A peer that missed one hop
+ * could not tell a continuing contact from a new one.
+ *
+ * Abandoning a migration does NOT unbind it. The value survives a failed
+ * migration for the same reason the contact does: the machines are still the
+ * same two machines on the medium where they met.
+ *
+ * If a rotating per-epoch identifier is ever needed -- for unlinkability, say
+ * -- it must be a SIXTH reference with its own name, not this one reused.
  */
 typedef struct {
     uint32_t local_ref;
@@ -195,6 +246,38 @@ mcl_link_status_t mcl_contact_begin(
 mcl_link_status_t mcl_contact_set_peer_ref(
     mcl_contact_t *contact,
     uint32_t peer_ref);
+
+/* ============================================================
+ * DUPLICATES AND RETRANSMISSION
+ *
+ * Every control in the migration sequence can be lost, and the only repair
+ * available on a lossy medium is retransmission. So every control must be
+ * answerable a second time without changing the outcome. An implementation that
+ * handles only the first copy of each works perfectly in a test harness and
+ * strands a contact the first time a radio drops a frame.
+ *
+ * The rule for the whole sequence:
+ *
+ *   A repeat of a control that names the SAME transaction and carries the SAME
+ *   content succeeds and changes nothing. A repeat that names the same
+ *   transaction with DIFFERENT content is refused -- it is either a bug or a
+ *   third party rewriting a step, and there is no correct way to choose between
+ *   two versions of one step.
+ *
+ * Applied per control:
+ *
+ *   duplicate OFFER           mcl_contact_record_offer, same refs and params
+ *   duplicate ACCEPT          mcl_contact_agree, from any post-agreement state
+ *   duplicate PATH_CHALLENGE  mcl_contact_challenge_repeat, re-echo
+ *   duplicate PATH_RESPONSE   mcl_contact_validation_response, from VALIDATED
+ *   duplicate COMMIT          mcl_contact_commit_repeat, re-confirm
+ *   duplicate CONFIRM         mcl_contact_commit_confirm, from ACTIVE
+ *
+ * A duplicate ACCEPT deserves particular care: it must NOT return the contact
+ * to AGREED from VALIDATING, VALIDATED or COMMITTING. A delayed copy of a step
+ * already completed would otherwise undo the progress made after it, and on a
+ * medium that reorders, a delayed copy is ordinary.
+ * ============================================================ */
 
 /*
  * Record a proposed transport change, whether this machine sent the offer or
@@ -273,12 +356,46 @@ mcl_link_status_t mcl_contact_validation_begin(
  *
  * Success means the candidate path carried a frame in both directions. It does
  * not mean the peer is the machine the contact began with.
+ *
+ * Idempotent from VALIDATED: a duplicate response naming the same transaction
+ * and echoing the same challenge succeeds and changes nothing. Refusing it
+ * would turn an ordinary retransmission into a migration failure.
  */
 mcl_link_status_t mcl_contact_validation_response(
     mcl_contact_t *contact,
     uint32_t migration_ref,
     uint32_t session_ref,
     const uint8_t echo[MCL_CONTACT_CHALLENGE_SIZE]);
+
+/*
+ * Should a repeated PATH_CHALLENGE be answered with PATH_RESPONSE again?
+ *
+ * WHY THIS EXISTS
+ *
+ * A sends PATH_CHALLENGE. B echoes it, reaching VALIDATED, and the
+ * PATH_RESPONSE is lost. A, hearing nothing, retransmits PATH_CHALLENGE -- the
+ * correct thing to do. But B has left AGREED, so the state machine that accepts
+ * a challenge only in AGREED refuses the duplicate, and the migration dies
+ * from one dropped frame with both peers behaving correctly.
+ *
+ * This is the same shape as the lost CONFIRM (mcl_contact_commit_repeat) and
+ * has the same answer: remember enough to give the same reply again.
+ *
+ * Sets *reecho to 1 only when the contact is VALIDATED, the transaction matches
+ * and the challenge bytes are IDENTICAL to the ones already echoed. A different
+ * challenge under the same migration_ref is refused: an honest retransmission
+ * repeats itself, and a new challenge for a transaction already validated is
+ * either a bug or a third party trying to have bytes of its choosing echoed
+ * back on a path this machine has already committed to probing.
+ *
+ * Changes nothing. Re-echoing must not re-run validation.
+ */
+mcl_link_status_t mcl_contact_challenge_repeat(
+    const mcl_contact_t *contact,
+    uint32_t migration_ref,
+    uint32_t session_ref,
+    const uint8_t challenge[MCL_CONTACT_CHALLENGE_SIZE],
+    uint8_t *reecho);
 
 /*
  * Begin committing a validated candidate path. Called by the peer that SENDS
@@ -315,6 +432,10 @@ mcl_link_status_t mcl_contact_commit_accept(
  * Committing is a two-step exchange so the peers cannot end up disagreeing
  * about which transport is authoritative, which is what a single unilateral
  * switch would allow.
+ *
+ * Idempotent from ACTIVE: a duplicate CONFIRM naming the migration that most
+ * recently completed succeeds and changes nothing. A CONFIRM naming anything
+ * else from ACTIVE is refused.
  */
 mcl_link_status_t mcl_contact_commit_confirm(
     mcl_contact_t *contact,
@@ -410,19 +531,78 @@ mcl_link_status_t mcl_contact_active_transport(
     uint8_t *transport_id);
 
 /*
- * Map the contact state onto the Link lifecycle state a frame should carry.
+ * Is a transport-change transaction outstanding at any stage?
  *
- * Exists so the two state machines cannot drift apart. They are related but not
- * identical: the Link lifecycle describes communication, and the contact
- * machine describes which transport carries it.
- *
- * This is NOT a security or authorization state. Charter 2.11.1: communication
- * state, security state and local authorization are orthogonal, and the Link
- * lifecycle must never grow an AUTHENTICATED or TRUSTED state.
+ * A fact about this machine, replacing the removed mcl_contact_link_state().
+ * It reports what is true rather than what another state machine ought to look
+ * like, which is the difference between an accessor and a second source of
+ * truth.
  */
-mcl_link_status_t mcl_contact_link_state(
+mcl_link_status_t mcl_contact_migration_active(
     const mcl_contact_t *contact,
-    mcl_link_state_t *state);
+    uint8_t *active);
+
+/* ============================================================
+ * WHICH TRANSPORT DO THESE BYTES GO ON?
+ *
+ * During a migration a contact spans TWO media at once, and "the transport" is
+ * not one thing. The offer and acceptance travel on the old one, the four
+ * handoff controls travel on the candidate, and ordinary traffic travels on
+ * whichever the cutover has reached. A send path with one transport handle
+ * cannot express that, and a receive path that does not know where bytes ARRIVED
+ * cannot check it -- which is how a PATH_RESPONSE fed in from the old path
+ * validates a candidate nobody ever probed.
+ *
+ * These two functions are the whole answer, and they are here rather than in
+ * the SDK because they are protocol rules, not integration convenience.
+ * ============================================================ */
+
+/*
+ * The transport on which a handoff control for the current transaction MUST be
+ * sent, and on which one MUST have arrived to be accepted.
+ *
+ * While a migration is in progress this is the CANDIDATE, because every one of
+ * the four controls exists to establish or complete the move to it. Otherwise
+ * it is the active transport, which is where a retransmitted COMMIT for an
+ * already-completed migration arrives -- the peer that finished the move is
+ * listening there and nowhere else.
+ *
+ * A control arriving anywhere else MUST be refused. Accepting a PATH_RESPONSE
+ * that arrived over the old path would mean the candidate was declared
+ * reachable on the strength of bytes that never crossed it, which is the one
+ * thing path validation exists to establish.
+ */
+mcl_link_status_t mcl_contact_control_transport(
+    const mcl_contact_t *contact,
+    uint8_t *transport_id);
+
+/*
+ * The transport ordinary (non-handoff) traffic uses, and whether it is
+ * currently quiesced.
+ *
+ * DATA-PLANE CUTOVER
+ *
+ * Between the transmission of COMMIT and the arrival of CONFIRM the two peers
+ * genuinely disagree about which transport carries the contact, and the
+ * disagreement is not a bug: the receiver of a COMMIT is on the new transport
+ * immediately, while the sender cannot know whether its COMMIT arrived. See the
+ * note on mcl_contact_abandon_migration.
+ *
+ * In that window ordinary traffic sent on `active_transport` may go out on a
+ * medium the peer has already left. So *quiesced is set to 1 while the contact
+ * is COMMITTING, and the caller MUST NOT send ordinary traffic for this contact
+ * until it clears. The window is bounded by the CONFIRM exchange, which is the
+ * shortest it can be made without the sender guessing.
+ *
+ * Quiescing rather than duplicating is the base-version rule. Duplicating a
+ * semantic object onto both media would deliver some operations twice, and at
+ * this layer nothing knows which operations are safe to repeat. A profile that
+ * defines duplicate-safe transition behaviour may do better; none does yet.
+ */
+mcl_link_status_t mcl_contact_data_transport(
+    const mcl_contact_t *contact,
+    uint8_t *transport_id,
+    uint8_t *quiesced);
 
 #ifdef __cplusplus
 }

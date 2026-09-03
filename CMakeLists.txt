@@ -7,7 +7,8 @@ add_library(mcl_link STATIC
     src/link.c
     src/contact.c
     src/rendezvous.c
-    src/handoff.c)
+    src/handoff.c
+    src/control.c)
 target_include_directories(mcl_link PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set_target_properties(mcl_link PROPERTIES
     C_STANDARD 99
@@ -40,6 +41,10 @@ if(MCL_LINK_BUILD_TESTS)
         C_STANDARD_REQUIRED YES
         C_EXTENSIONS NO)
     add_test(NAME mcl_link_rendezvous COMMAND mcl_link_test_rendezvous)
+
+    add_executable(mcl_link_test_control tests/test_control.c)
+    target_link_libraries(mcl_link_test_control PRIVATE mcl_link)
+    add_test(NAME mcl_link_control COMMAND mcl_link_test_control)
 
     add_executable(mcl_link_test_handoff tests/test_handoff.c)
     target_link_libraries(mcl_link_test_handoff PRIVATE mcl_link)

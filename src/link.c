@@ -361,6 +361,10 @@ static uint8_t mcl_link_frame_encodable(const mcl_link_frame_t *frame)
     if (frame->frame_class >= MCL_LINK_CLASS_COUNT) {
         return 0u;
     }
+    if (frame->frame_class == MCL_LINK_CLASS_ADAPT) {
+        /* Reserved. Nothing may emit one; see the decoder for why. */
+        return 0u;
+    }
     if ((frame->flags & MCL_LINK_FLAG_RESERVED) != 0u) {
         return 0u;
     }
@@ -496,6 +500,29 @@ mcl_link_status_t mcl_link_frame_decode(
     frame->frame_class = (mcl_link_frame_class_t)(in[0] & 0x0Fu);
     if (frame->frame_class >= MCL_LINK_CLASS_COUNT) {
         /* Unknown meaning is rejected, never guessed. */
+        return MCL_LINK_ERR_RANGE;
+    }
+    if (frame->frame_class == MCL_LINK_CLASS_ADAPT) {
+        /*
+         * ADAPT is RESERVED at Link major 0 and is refused.
+         *
+         * It was assigned for transport adaptation -- changing rate, profile or
+         * parameters without a full migration -- and then nothing was ever
+         * built on it: no payload was designed, no mechanism uses it, and the
+         * cases considered so far are served either by a transport's own
+         * adaptation, below MCL entirely, or by a migration, which is
+         * specified.
+         *
+         * Accepting a class whose payload nobody has specified is an
+         * interoperability failure waiting for its first independent
+         * implementation: two vendors would each invent a payload and both
+         * would decode successfully. Reserving costs nothing and can be undone;
+         * specifying it speculatively cannot. See
+         * spec/link-frame-classes-v0.1.md section 5.
+         *
+         * This is a deliberate BEHAVIOUR CHANGE: a frame previously accepted
+         * with an undefined payload is now refused. Nothing sends one.
+         */
         return MCL_LINK_ERR_RANGE;
     }
 

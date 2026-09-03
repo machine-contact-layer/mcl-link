@@ -75,6 +75,15 @@ static void mcl_contact_clear(mcl_contact_t *contact)
 }
 
 /* True while a migration transaction is outstanding at any stage. */
+static int mcl_contact_migration_in_progress(const mcl_contact_t *contact)
+{
+    return contact->state == MCL_CONTACT_STATE_OFFERED ||
+           contact->state == MCL_CONTACT_STATE_AGREED ||
+           contact->state == MCL_CONTACT_STATE_VALIDATING ||
+           contact->state == MCL_CONTACT_STATE_VALIDATED ||
+           contact->state == MCL_CONTACT_STATE_COMMITTING;
+}
+
 /*
  * States a migration can still be abandoned from.
  *
@@ -201,6 +210,22 @@ mcl_link_status_t mcl_contact_record_offer(
     if (transport_id == MCL_CONTACT_TRANSPORT_RESERVED) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
+    if (contact->state == MCL_CONTACT_STATE_OFFERED &&
+        migration_ref == contact->pending_migration_ref) {
+        /*
+         * A retransmitted offer. Identical in every field it names, so it is
+         * accepted and changes nothing; different in any of them, and it is a
+         * second offer wearing the first one's reference, which there is no
+         * correct way to merge.
+         */
+        if (transport_id != contact->pending_transport ||
+            profile_id != contact->pending_profile ||
+            endpoint_token != contact->pending_endpoint_token ||
+            validity != contact->pending_validity) {
+            return MCL_LINK_ERR_CONTEXT_MISMATCH;
+        }
+        return MCL_LINK_OK;
+    }
     if (contact->state != MCL_CONTACT_STATE_ACTIVE) {
         /*
          * A simultaneous offer is not resolved here. The caller detects the
@@ -312,6 +337,35 @@ mcl_link_status_t mcl_contact_agree(
     if (session_ref == MCL_CONTACT_SESSION_NONE) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
+    if (contact->session_valid != 0u && session_ref != contact->session_ref) {
+        /*
+         * One session reference for the life of the contact. A later
+         * acceptance naming a different one is refused rather than adopted:
+         * continuity across a change of medium is what this reference exists
+         * to express, and it cannot express it if it changes on each hop. See
+         * the SESSION_REF LIFETIME note in contact.h.
+         */
+        return MCL_LINK_ERR_CONTEXT_MISMATCH;
+    }
+    if (contact->state == MCL_CONTACT_STATE_AGREED ||
+        contact->state == MCL_CONTACT_STATE_VALIDATING ||
+        contact->state == MCL_CONTACT_STATE_VALIDATED ||
+        contact->state == MCL_CONTACT_STATE_COMMITTING) {
+        /*
+         * A retransmitted acceptance. Accepted when it names the same
+         * transaction, and it changes NOTHING -- in particular it must not
+         * return a contact from VALIDATING, VALIDATED or COMMITTING to AGREED.
+         * A delayed copy of a step already completed would otherwise undo the
+         * progress made after it, and on a medium that reorders, a delayed
+         * copy is ordinary rather than exceptional.
+         */
+        if (migration_ref != contact->pending_migration_ref ||
+            transport_id != contact->pending_transport ||
+            profile_id != contact->pending_profile) {
+            return MCL_LINK_ERR_CONTEXT_MISMATCH;
+        }
+        return MCL_LINK_OK;
+    }
     if (contact->state != MCL_CONTACT_STATE_OFFERED) {
         return MCL_LINK_ERR_INVALID_STATE;
     }
@@ -363,6 +417,23 @@ mcl_link_status_t mcl_contact_validation_response(
     if (contact == NULL || echo == NULL) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
+    if (contact->state == MCL_CONTACT_STATE_VALIDATED) {
+        /*
+         * A retransmitted response. The path is already proven; repeating the
+         * proof changes nothing. Refusing it would report a migration failure
+         * caused by a duplicate arriving, which is not a failure of anything.
+         */
+        status = mcl_contact_check_transaction(contact, migration_ref,
+                                               session_ref);
+        if (status != MCL_LINK_OK) {
+            return status;
+        }
+        if (contact->challenge_valid == 0u ||
+            mcl_contact_challenge_equals(contact, echo) == 0) {
+            return MCL_LINK_ERR_CONTEXT_MISMATCH;
+        }
+        return MCL_LINK_OK;
+    }
     if (contact->state != MCL_CONTACT_STATE_VALIDATING) {
         return MCL_LINK_ERR_INVALID_STATE;
     }
@@ -379,6 +450,48 @@ mcl_link_status_t mcl_contact_validation_response(
     }
 
     contact->state = MCL_CONTACT_STATE_VALIDATED;
+    return MCL_LINK_OK;
+}
+
+mcl_link_status_t mcl_contact_challenge_repeat(
+    const mcl_contact_t *contact,
+    uint32_t migration_ref,
+    uint32_t session_ref,
+    const uint8_t challenge[MCL_CONTACT_CHALLENGE_SIZE],
+    uint8_t *reecho)
+{
+    if (contact == NULL || challenge == NULL || reecho == NULL) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+
+    *reecho = 0u;
+
+    if (contact->state != MCL_CONTACT_STATE_VALIDATED) {
+        /*
+         * Not an error. A challenge arriving in AGREED is handled by the
+         * ordinary state machine, and one arriving anywhere else is simply not
+         * answered here.
+         */
+        return MCL_LINK_OK;
+    }
+    if (contact->challenge_valid == 0u) {
+        return MCL_LINK_OK;
+    }
+    if (mcl_contact_check_transaction(contact, migration_ref, session_ref)
+        != MCL_LINK_OK) {
+        return MCL_LINK_OK;
+    }
+    if (mcl_contact_challenge_equals(contact, challenge) == 0) {
+        /*
+         * Same transaction, different bytes. An honest retransmission repeats
+         * itself. This is either a bug or an attempt to have bytes of
+         * someone's choosing echoed back under a transaction already
+         * validated, and it is answered with silence rather than an echo.
+         */
+        return MCL_LINK_OK;
+    }
+
+    *reecho = 1u;
     return MCL_LINK_OK;
 }
 
@@ -406,6 +519,30 @@ mcl_link_status_t mcl_contact_commit_confirm(
 
     if (contact == NULL) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+    if (contact->state == MCL_CONTACT_STATE_ACTIVE) {
+        /*
+         * A retransmitted confirmation of the migration that just completed.
+         * The move already happened; confirming it again changes nothing. A
+         * CONFIRM naming anything else from ACTIVE is refused -- it would be
+         * confirming a migration this machine has no record of agreeing to.
+         */
+        if (contact->session_valid == 0u ||
+            contact->completed_migration_ref == MCL_CONTACT_MIGRATION_NONE) {
+            /*
+             * No migration has ever completed on this contact, so this is not
+             * a duplicate of anything -- it is a confirmation arriving with no
+             * commit behind it. Reported as a state error rather than a
+             * mismatch, which would imply the caller merely named the wrong
+             * transaction.
+             */
+            return MCL_LINK_ERR_INVALID_STATE;
+        }
+        if (migration_ref != contact->completed_migration_ref ||
+            session_ref != contact->session_ref) {
+            return MCL_LINK_ERR_CONTEXT_MISMATCH;
+        }
+        return MCL_LINK_OK;
     }
     if (contact->state != MCL_CONTACT_STATE_COMMITTING) {
         return MCL_LINK_ERR_INVALID_STATE;
@@ -508,9 +645,15 @@ mcl_link_status_t mcl_contact_abandon_migration(mcl_contact_t *contact)
         return MCL_LINK_ERR_INVALID_STATE;
     }
 
+    /*
+     * The pending transaction ends; the SESSION does not. session_ref names
+     * the continuing logical contact, and a failed migration does not end the
+     * contact -- the two machines are still the two machines on the medium
+     * where they met. Unbinding it here would mean a peer that missed the
+     * abandonment could not tell the continuing contact from a new one, which
+     * is exactly the confusion the reference exists to prevent.
+     */
     mcl_contact_clear_pending(contact);
-    contact->session_ref = MCL_CONTACT_SESSION_NONE;
-    contact->session_valid = 0u;
     contact->state = MCL_CONTACT_STATE_ACTIVE;
     return MCL_LINK_OK;
 }
@@ -547,36 +690,71 @@ mcl_link_status_t mcl_contact_active_transport(
     return MCL_LINK_OK;
 }
 
-mcl_link_status_t mcl_contact_link_state(
+mcl_link_status_t mcl_contact_migration_active(
     const mcl_contact_t *contact,
-    mcl_link_state_t *state)
+    uint8_t *active)
 {
-    if (contact == NULL || state == NULL) {
+    if (contact == NULL || active == NULL) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
 
-    switch (contact->state) {
-    case MCL_CONTACT_STATE_ACTIVE:
-        *state = MCL_LINK_STATE_ESTABLISHED;
-        break;
-    case MCL_CONTACT_STATE_OFFERED:
-        *state = MCL_LINK_STATE_NEGOTIATING;
-        break;
-    case MCL_CONTACT_STATE_AGREED:
-    case MCL_CONTACT_STATE_VALIDATING:
-    case MCL_CONTACT_STATE_VALIDATED:
-    case MCL_CONTACT_STATE_COMMITTING:
-        /* The whole candidate-path sequence is handoff in Link terms: agreed
-         * but not yet carrying the contact. */
-        *state = MCL_LINK_STATE_HANDOFF;
-        break;
-    case MCL_CONTACT_STATE_CLOSED:
-        *state = MCL_LINK_STATE_CLOSED;
-        break;
-    case MCL_CONTACT_STATE_NONE:
-    default:
-        *state = MCL_LINK_STATE_IDLE;
-        break;
+    *active = (uint8_t)(mcl_contact_migration_in_progress(contact) ? 1u : 0u);
+    return MCL_LINK_OK;
+}
+
+mcl_link_status_t mcl_contact_control_transport(
+    const mcl_contact_t *contact,
+    uint8_t *transport_id)
+{
+    if (contact == NULL || transport_id == NULL) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
+    if (contact->state == MCL_CONTACT_STATE_NONE ||
+        contact->state == MCL_CONTACT_STATE_CLOSED) {
+        return MCL_LINK_ERR_INVALID_STATE;
+    }
+
+    if (mcl_contact_migration_in_progress(contact) != 0) {
+        /*
+         * The candidate. Every one of the four controls exists to establish or
+         * complete the move to it, so all four belong there and nowhere else.
+         */
+        *transport_id = contact->pending_transport;
+        return MCL_LINK_OK;
+    }
+
+    /*
+     * No transaction outstanding. A COMMIT retransmitted after this machine
+     * already completed the move arrives on the transport it moved to, which is
+     * now the active one.
+     */
+    *transport_id = contact->active_transport;
+    return MCL_LINK_OK;
+}
+
+mcl_link_status_t mcl_contact_data_transport(
+    const mcl_contact_t *contact,
+    uint8_t *transport_id,
+    uint8_t *quiesced)
+{
+    if (contact == NULL || transport_id == NULL || quiesced == NULL) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+    if (contact->state == MCL_CONTACT_STATE_NONE ||
+        contact->state == MCL_CONTACT_STATE_CLOSED) {
+        return MCL_LINK_ERR_INVALID_STATE;
+    }
+
+    *transport_id = contact->active_transport;
+
+    /*
+     * Quiesced from the transmission of COMMIT until CONFIRM. In that window
+     * the peer may already have left active_transport, and this machine cannot
+     * find out without the CONFIRM it is waiting for. Sending ordinary traffic
+     * into it would be transmitting onto a medium believed, without evidence,
+     * still to be carrying the contact.
+     */
+    *quiesced = (uint8_t)((contact->state == MCL_CONTACT_STATE_COMMITTING)
+                          ? 1u : 0u);
     return MCL_LINK_OK;
 }

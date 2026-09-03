@@ -100,12 +100,17 @@ static void test_every_class_round_trips(void)
 {
     unsigned c;
 
-    printf("[TEST] every frame class round trips\n");
+    printf("[TEST] every assigned frame class round trips\n");
 
     for (c = 0u; c < MCL_LINK_CLASS_COUNT; ++c) {
         mcl_link_frame_t tx, rx;
         uint8_t buf[64];
         size_t written = 0u, consumed = 0u;
+
+        if (c == MCL_LINK_CLASS_ADAPT) {
+            /* Reserved; covered by its own test below. */
+            continue;
+        }
 
         memset(&tx, 0, sizeof(tx));
         tx.frame_class = (mcl_link_frame_class_t)c;
@@ -119,6 +124,50 @@ static void test_every_class_round_trips(void)
               "decode class");
         CHECK(rx.frame_class == (mcl_link_frame_class_t)c, "class value preserved");
     }
+}
+
+/*
+ * ADAPT IS RESERVED, AND A RESERVED CLASS MUST BE REFUSED.
+ *
+ * It was assigned for transport adaptation and then nothing was built on it:
+ * no payload designed, no mechanism using it, and the cases considered so far
+ * are served either by a transport's own adaptation, below MCL entirely, or by
+ * a migration, which is specified.
+ *
+ * Accepting a class whose payload nobody has specified is an interoperability
+ * failure waiting for its first independent implementation -- two vendors each
+ * invent a payload, and both decode successfully. This is a deliberate
+ * behaviour change from earlier builds, which accepted it. Reserving costs
+ * nothing and can be undone; specifying it speculatively cannot. See
+ * spec/link-frame-classes-v0.1.md section 5.
+ */
+static void test_adapt_is_reserved(void)
+{
+    mcl_link_frame_t tx, rx;
+    uint8_t buf[64];
+    size_t written = 0u, consumed = 0u;
+
+    printf("[TEST] the reserved ADAPT class is refused\n");
+
+    memset(&tx, 0, sizeof(tx));
+    tx.frame_class = MCL_LINK_CLASS_ADAPT;
+    tx.source_ref = 0x55667788u;
+    tx.payload = k_presence;
+    tx.payload_len = (uint16_t)sizeof(k_presence);
+
+    CHECK(mcl_link_frame_encode(&tx, buf, sizeof(buf), &written) ==
+          MCL_LINK_ERR_RANGE,
+          "nothing emits a reserved class");
+
+    /* A frame built by hand, as another implementation might, must be refused
+     * on decode rather than accepted with an undefined payload. */
+    tx.frame_class = MCL_LINK_CLASS_DATA;
+    CHECK(mcl_link_frame_encode(&tx, buf, sizeof(buf), &written) == MCL_LINK_OK,
+          "a DATA frame of the same shape encodes");
+    buf[0] = (uint8_t)((buf[0] & 0xF0u) | (uint8_t)MCL_LINK_CLASS_ADAPT);
+    CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed) ==
+          MCL_LINK_ERR_RANGE,
+          "and the same bytes relabelled ADAPT are refused");
 }
 
 static void test_empty_payload(void)
@@ -418,6 +467,7 @@ int main(void)
     test_minimal_round_trip();
     test_all_optionals_round_trip();
     test_every_class_round_trips();
+    test_adapt_is_reserved();
     test_empty_payload();
     test_reject_unknown_version();
     test_reject_unknown_class();
