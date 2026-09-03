@@ -182,8 +182,16 @@ Working classes:
 - `NACK`
 - `KEEPALIVE`
 - `ADAPT`
-- `HANDOFF`
+- `HANDOFF` — payload defined by [link-handoff-control-v0.1.md](link-handoff-control-v0.1.md)
 - `CLOSE`
+
+Of these, only `HANDOFF` currently has a defined payload contract. The rest
+carry either a canonical Wire object (`CONTACT`, `DATA`, `CAPABILITY`,
+`NEGOTIATION`) or nothing yet specified. **Before a stable Link major, every
+assigned class must have a defined payload and behaviour, an explicitly empty
+payload contract, or be reserved.** A class that is accepted by the decoder but
+whose payload nobody has specified is an interoperability failure waiting for
+its first independent implementation.
 
 ## 5. Addressing
 
@@ -243,6 +251,36 @@ Examples:
 MCL does not require handoff. A session may remain entirely on the initial transport.
 
 Handoff does not imply trust. Local policy decides whether to accept a transport offer or expose an endpoint.
+
+### 8.1 The sequence, and where each part is specified
+
+```
+old transport   TRANSPORT_OFFER   ->   Wire semantic object
+                TRANSPORT_ACCEPT  <-   Wire semantic object
+
+candidate       rendezvous beacon      mcl/rendezvous.h
+                PATH_CHALLENGE    ->   HANDOFF control, operation 1
+                PATH_RESPONSE     <-   HANDOFF control, operation 2
+                COMMIT            ->   HANDOFF control, operation 3
+                CONFIRM           <-   HANDOFF control, operation 4
+```
+
+The offer and the acceptance are Wire objects because they are things one
+machine *means* to another. The four controls are not: they describe this
+Link's own change of transport and mean nothing outside it. They are therefore
+Link's, and are specified in
+[link-handoff-control-v0.1.md](link-handoff-control-v0.1.md) with an operation
+registry in [../registries/handoff-ops-v0.1.json](../registries/handoff-ops-v0.1.json).
+
+The old transport stays active until `CONFIRM`. A migration that fails at any
+stage returns to it; a failed migration must never destroy the contact.
+
+**Completing this sequence establishes reachability on the candidate path and
+nothing else.** Every reference in it crosses an observable medium in the clear.
+A listener that heard the original contact can complete the whole sequence and
+be accepted exactly as an honest peer would. Establishing that the peer is the
+one the contact began with requires cryptographic contact binding, which MCL
+does not have.
 
 ## 9. Freshness and trust hooks
 

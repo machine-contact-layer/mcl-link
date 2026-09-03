@@ -1,0 +1,145 @@
+{
+  "vector_set": "mcl-link-handoff-control",
+  "version": "0.1",
+  "status": "RESEARCH DRAFT",
+  "control_version": 0,
+  "specification": "mcl-link/spec/link-handoff-control-v0.1.md",
+  "registry": "mcl-link/registries/handoff-ops-v0.1.json",
+  "immutability": "Once published, this file is never edited. A legitimate byte change gets a new version. These bytes are what an independent implementation is checked against; editing them to match new code would remove the only thing that makes the check meaningful.",
+  "carriage": "Each `bytes` value is the complete payload of one Link frame whose frame_class is HANDOFF (8). The frame's payload_len delimits it exactly.",
+  "common_fields": {
+    "migration_ref": "0x4D194201",
+    "session_ref": "0x9A3C0517",
+    "challenge": "8B41D2076E55903C"
+  },
+  "positive": [
+    {
+      "name": "path_challenge",
+      "operation": 1,
+      "operation_name": "PATH_CHALLENGE",
+      "migration_ref": 1293500929,
+      "session_ref": 2587624727,
+      "challenge_present": true,
+      "challenge": "8b41d2076e55903c",
+      "size": 18,
+      "bytes_hex": "00014d1942019a3c05178b41d2076e55903c"
+    },
+    {
+      "name": "path_response",
+      "operation": 2,
+      "operation_name": "PATH_RESPONSE",
+      "migration_ref": 1293500929,
+      "session_ref": 2587624727,
+      "challenge_present": true,
+      "challenge": "8b41d2076e55903c",
+      "size": 18,
+      "bytes_hex": "00024d1942019a3c05178b41d2076e55903c"
+    },
+    {
+      "name": "commit",
+      "operation": 3,
+      "operation_name": "COMMIT",
+      "migration_ref": 1293500929,
+      "session_ref": 2587624727,
+      "challenge_present": false,
+      "size": 10,
+      "bytes_hex": "00034d1942019a3c0517"
+    },
+    {
+      "name": "confirm",
+      "operation": 4,
+      "operation_name": "CONFIRM",
+      "migration_ref": 1293500929,
+      "session_ref": 2587624727,
+      "challenge_present": false,
+      "size": 10,
+      "bytes_hex": "00044d1942019a3c0517"
+    }
+  ],
+  "negative": [
+    {
+      "name": "truncated_header",
+      "bytes_hex": "00034d1942019a3c05",
+      "expect": "TRUNCATED",
+      "why": "Nine bytes. The operation is readable but the fixed header is not complete, and more bytes could still complete it."
+    },
+    {
+      "name": "empty",
+      "bytes_hex": "",
+      "expect": "TRUNCATED",
+      "why": "A carriage that delivers nothing has not delivered a malformed control."
+    },
+    {
+      "name": "truncated_challenge",
+      "bytes_hex": "00014d1942019a3c05178b41d2076e5590",
+      "expect": "TRUNCATED",
+      "why": "Seventeen bytes: a PATH_CHALLENGE one byte short of its challenge."
+    },
+    {
+      "name": "trailing_byte",
+      "bytes_hex": "00034d1942019a3c051700",
+      "expect": "RANGE",
+      "why": "Eleven bytes for a ten-byte COMMIT. The frame already declared its payload length, so excess is a format disagreement, not a boundary question."
+    },
+    {
+      "name": "challenge_on_commit",
+      "bytes_hex": "00034d1942019a3c05178b41d2076e55903c",
+      "expect": "RANGE",
+      "why": "A COMMIT sized as though it carried a challenge. The operation determines the length; nothing else may."
+    },
+    {
+      "name": "challenge_absent_on_path_challenge",
+      "bytes_hex": "00014d1942019a3c0517",
+      "expect": "TRUNCATED",
+      "why": "A PATH_CHALLENGE sized as though it carried no challenge."
+    },
+    {
+      "name": "reserved_operation",
+      "bytes_hex": "00004d1942019a3c0517",
+      "expect": "RANGE",
+      "why": "Operation 0 is permanently reserved so a zeroed buffer can never decode."
+    },
+    {
+      "name": "all_zero",
+      "bytes_hex": "00000000000000000000",
+      "expect": "RANGE",
+      "why": "Every zero-forbidden field is zero at once. The single case most likely to arise from an uninitialised buffer."
+    },
+    {
+      "name": "unassigned_operation",
+      "bytes_hex": "00054d1942019a3c0517",
+      "expect": "RANGE",
+      "why": "Operation 5 is unassigned. Every handoff operation is critical, so an unknown one is rejected rather than skipped."
+    },
+    {
+      "name": "experimental_operation",
+      "bytes_hex": "00c04d1942019a3c0517",
+      "expect": "RANGE",
+      "why": "Operation 192 is Experimental Use. An implementation not party to the experiment rejects it exactly as it rejects an unassigned value."
+    },
+    {
+      "name": "wrong_control_version",
+      "bytes_hex": "01034d1942019a3c0517",
+      "expect": "INCOMPATIBLE_VERSION",
+      "why": "Version is checked before operation, so a future control version is reported as a version mismatch rather than as nonsense."
+    },
+    {
+      "name": "future_version_unknown_operation",
+      "bytes_hex": "01ff4d1942019a3c0517",
+      "expect": "INCOMPATIBLE_VERSION",
+      "why": "Pins the ordering: a future version carrying an operation this build does not know still reports the version, not the operation."
+    },
+    {
+      "name": "zero_migration_ref",
+      "bytes_hex": "0003000000009a3c0517",
+      "expect": "RANGE",
+      "why": "A control with no transaction cannot be correlated with the offer that started it."
+    },
+    {
+      "name": "zero_session_ref",
+      "bytes_hex": "00034d19420100000000",
+      "expect": "RANGE",
+      "why": "A control arriving on a transport the contact has not been using must say which contact it belongs to."
+    }
+  ]
+}

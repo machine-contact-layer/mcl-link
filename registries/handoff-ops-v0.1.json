@@ -1,0 +1,76 @@
+{
+  "registry": "mcl-link-handoff-operations",
+  "version": "0.1",
+  "status": "RESEARCH DRAFT",
+  "change_controller": "mcl-link maintainers",
+  "authoritative_for": "The operation byte of the Link HANDOFF control payload defined in mcl-link/spec/link-handoff-control-v0.1.md and mcl-link/include/mcl/handoff.h.",
+  "criticality": "Every handoff operation is critical. An implementation that does not recognise an operation MUST reject the control rather than skip it, because the assigned operations are exactly the steps that move the migration state machine; skipping one would mean continuing a migration whose steps were not performed.",
+  "ranges": [
+    {
+      "range": "0",
+      "policy": "Reserved",
+      "note": "Permanently reserved so that a zeroed buffer can never decode as a valid control."
+    },
+    {
+      "range": "1-4",
+      "policy": "Assigned",
+      "note": "The four operations of the ordinary non-cryptographic migration sequence."
+    },
+    {
+      "range": "5-191",
+      "policy": "Specification Required",
+      "note": "Unassigned. A new operation is added here, not by incrementing control_version, because the fixed header does not change shape."
+    },
+    {
+      "range": "192-255",
+      "policy": "Experimental Use",
+      "note": "For local experiments. An implementation not party to the experiment rejects these exactly as it rejects an unassigned value, which is the correct outcome and not a failure. The reference implementation deliberately implements none of them."
+    }
+  ],
+  "operations": [
+    {
+      "value": 1,
+      "name": "PATH_CHALLENGE",
+      "size_bytes": 18,
+      "carries_challenge": true,
+      "sender": "the peer that controls the migration",
+      "transport": "candidate",
+      "valid_states": ["AGREED"],
+      "description": "Probes the candidate transport with the caller-supplied 8-byte opaque challenge. Establishes reachability only."
+    },
+    {
+      "value": 2,
+      "name": "PATH_RESPONSE",
+      "size_bytes": 18,
+      "carries_challenge": true,
+      "sender": "the peer that received PATH_CHALLENGE",
+      "transport": "candidate",
+      "valid_states": ["VALIDATING"],
+      "description": "Echoes the challenge exactly. Proves the candidate path carried a frame in both directions. Proves nothing about who sent it: an observer of the candidate path sees the challenge."
+    },
+    {
+      "value": 3,
+      "name": "COMMIT",
+      "size_bytes": 10,
+      "carries_challenge": false,
+      "sender": "the peer that controls the migration",
+      "transport": "candidate",
+      "valid_states": ["VALIDATED", "ACTIVE (retransmission only)"],
+      "description": "Requests the switch to the validated candidate path. Idempotent: a COMMIT that matches the most recently completed migration of an ACTIVE contact is answered with CONFIRM again and changes no state. That retransmission is what prevents a lost CONFIRM from leaving the two peers on different transports permanently."
+    },
+    {
+      "value": 4,
+      "name": "CONFIRM",
+      "size_bytes": 10,
+      "carries_challenge": false,
+      "sender": "the peer that received COMMIT",
+      "transport": "candidate",
+      "valid_states": ["COMMITTING"],
+      "description": "Acknowledges the switch. Only on receiving this does the peer that sent COMMIT treat the candidate as the active transport."
+    }
+  ],
+  "not_assigned": {
+    "ABORT": "Deliberately not assigned. Negative outcomes in MCL are expressed by absence and by the caller-enforced validity of the offer, because this library has no clock. An abort would add a second, faster path to a state the timeout already reaches, and one that an observer of the references could send in order to cancel a migration. It can be assigned an operation value later without a version change if a deployment demonstrates that convergence latency actually matters."
+  },
+  "security_note": "No operation establishes identity, authenticity, authority or trust. migration_ref, session_ref and the challenge all cross an observable medium in the clear and can be replayed by anyone who heard them."
+}

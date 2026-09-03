@@ -70,6 +70,7 @@ static void mcl_contact_clear(mcl_contact_t *contact)
     contact->peer_ref_valid = 0u;
     contact->session_valid = 0u;
     contact->migration_count = 0u;
+    contact->completed_migration_ref = MCL_CONTACT_MIGRATION_NONE;
     mcl_contact_clear_pending(contact);
 }
 
@@ -388,6 +389,13 @@ mcl_link_status_t mcl_contact_commit_confirm(
     }
 
     contact->active_transport = contact->pending_transport;
+    /*
+     * Remembered before the pending transaction is cleared. A peer whose
+     * CONFIRM was lost will retransmit COMMIT, and without this the contact
+     * would have no way to recognise the transaction it had just finished.
+     * See mcl_contact_commit_repeat.
+     */
+    contact->completed_migration_ref = migration_ref;
     mcl_contact_clear_pending(contact);
     contact->state = MCL_CONTACT_STATE_ACTIVE;
 
@@ -399,6 +407,43 @@ mcl_link_status_t mcl_contact_commit_confirm(
     if (contact->migration_count < 0xFFFFu) {
         contact->migration_count = (uint16_t)(contact->migration_count + 1u);
     }
+    return MCL_LINK_OK;
+}
+
+mcl_link_status_t mcl_contact_commit_repeat(
+    const mcl_contact_t *contact,
+    uint32_t migration_ref,
+    uint32_t session_ref,
+    uint8_t *reconfirm)
+{
+    if (contact == NULL || reconfirm == NULL) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+
+    *reconfirm = 0u;
+
+    if (contact->state != MCL_CONTACT_STATE_ACTIVE) {
+        /*
+         * Not an error. A COMMIT arriving mid-migration is handled by the
+         * ordinary state machine, and one arriving on a closed contact is
+         * simply not answered.
+         */
+        return MCL_LINK_OK;
+    }
+    if (contact->completed_migration_ref == MCL_CONTACT_MIGRATION_NONE) {
+        return MCL_LINK_OK;
+    }
+    if (contact->session_valid == 0u) {
+        return MCL_LINK_OK;
+    }
+    if (migration_ref != contact->completed_migration_ref) {
+        return MCL_LINK_OK;
+    }
+    if (session_ref != contact->session_ref) {
+        return MCL_LINK_OK;
+    }
+
+    *reconfirm = 1u;
     return MCL_LINK_OK;
 }
 

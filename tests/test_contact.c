@@ -453,6 +453,149 @@ static void test_repeated_migration(void)
 }
 
 /*
+ * A LOST CONFIRM MUST NOT LEAVE THE PEERS ON DIFFERENT TRANSPORTS.
+ *
+ * A sends COMMIT. B accepts it, completes the migration and replies CONFIRM.
+ * The CONFIRM is lost. B is now on the new transport; A is still COMMITTING,
+ * eventually gives up, and correctly returns to the old one. They now disagree
+ * about which transport carries the contact, and no adversary was involved --
+ * one dropped frame is enough.
+ *
+ * An abort message cannot repair this, because the peers are no longer on a
+ * common transport to abort over. Retransmission can: A resends COMMIT, and B
+ * must be able to answer it a second time. This test drives both peers through
+ * that, and asserts they finish on the same transport.
+ */
+static void test_lost_confirm_recovers_by_retransmission(void)
+{
+    mcl_contact_t a;
+    mcl_contact_t b;
+    uint8_t a_transport = 0u;
+    uint8_t b_transport = 0u;
+    uint8_t reconfirm = 0u;
+
+    CHECK_STATUS(mcl_contact_begin(&a, MCL_CONTACT_ROLE_INITIATOR, 0xA0u,
+                                   MCL_CONTACT_TRANSPORT_BLE), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_begin(&b, MCL_CONTACT_ROLE_RESPONDER, 0xB0u,
+                                   MCL_CONTACT_TRANSPORT_BLE), MCL_LINK_OK);
+
+    /* Both reach VALIDATED on the candidate. */
+    CHECK_STATUS(mcl_contact_record_offer(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_record_offer(&b, MIG_A, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&a, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u, SESS),
+                 MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&b, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u, SESS),
+                 MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_begin(&a, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_begin(&b, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&a, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&b, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+
+    /* A sends COMMIT. B receives it and completes, replying CONFIRM. */
+    CHECK_STATUS(mcl_contact_commit_begin(&a), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_begin(&b), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_confirm(&b, MIG_A, SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_active_transport(&b, &b_transport), MCL_LINK_OK);
+    CHECK_TRUE(b_transport == MCL_CONTACT_TRANSPORT_IP);
+
+    /* The CONFIRM never arrives. A is still committing on the old transport. */
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_COMMITTING);
+    CHECK_STATUS(mcl_contact_active_transport(&a, &a_transport), MCL_LINK_OK);
+    CHECK_TRUE(a_transport == MCL_CONTACT_TRANSPORT_BLE);
+
+    /* A retransmits COMMIT. B has cleared its pending transaction, so the
+     * ordinary path refuses it -- which is correct, and is exactly why the
+     * retransmission case has to be asked separately. */
+    CHECK_STATUS(mcl_contact_commit_begin(&b), MCL_LINK_ERR_INVALID_STATE);
+
+    CHECK_STATUS(mcl_contact_commit_repeat(&b, MIG_A, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 1u);
+
+    /* Re-confirming changed nothing on B. */
+    CHECK_TRUE(b.state == MCL_CONTACT_STATE_ACTIVE);
+    CHECK_TRUE(b.migration_count == 1u);
+    CHECK_STATUS(mcl_contact_active_transport(&b, &b_transport), MCL_LINK_OK);
+    CHECK_TRUE(b_transport == MCL_CONTACT_TRANSPORT_IP);
+
+    /* The repeated CONFIRM reaches A, which completes. */
+    CHECK_STATUS(mcl_contact_commit_confirm(&a, MIG_A, SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_active_transport(&a, &a_transport), MCL_LINK_OK);
+    CHECK_TRUE(a_transport == b_transport);
+}
+
+/*
+ * The retransmission answer must be narrow. It exists to repair one dropped
+ * frame, not to become a way of making a settled contact move again, and not
+ * to answer a transaction this contact never completed.
+ */
+static void test_commit_repeat_is_narrow(void)
+{
+    mcl_contact_t c;
+    uint8_t reconfirm = 0xFFu;
+
+    CHECK_STATUS(mcl_contact_begin(&c, MCL_CONTACT_ROLE_RESPONDER, 1u,
+                                   MCL_CONTACT_TRANSPORT_AP), MCL_LINK_OK);
+
+    /* Nothing has completed yet. */
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_A, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 0u);
+
+    run_full_migration(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE, 1u, SESS);
+
+    /* The transaction that completed is answered. */
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_A, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 1u);
+
+    /* A different transaction is not, even with the right session. Otherwise a
+     * stale COMMIT from an abandoned attempt would be confirmed. */
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_B, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 0u);
+
+    /* Nor a different contact's session carrying the right transaction. */
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_A, SESS + 1u, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 0u);
+
+    /* A newer migration replaces the memory: only the most recent completed
+     * transaction is answerable, so an old COMMIT cannot be revived. */
+    run_full_migration(&c, MIG_B, MCL_CONTACT_TRANSPORT_IP, 1u, SESS);
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_A, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 0u);
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_B, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 1u);
+
+    /* While a migration is in progress the ordinary state machine owns the
+     * COMMIT, so the retransmission path must stay silent. */
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A + 9u,
+                                          MCL_CONTACT_TRANSPORT_BLE, 1u,
+                                          0xD00D0009u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_B, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 0u);
+
+    /* A closed contact answers nothing. */
+    CHECK_STATUS(mcl_contact_close(&c), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_B, SESS, &reconfirm),
+                 MCL_LINK_OK);
+    CHECK_TRUE(reconfirm == 0u);
+
+    CHECK_STATUS(mcl_contact_commit_repeat(NULL, MIG_B, SESS, &reconfirm),
+                 MCL_LINK_ERR_INVALID_ARGUMENT);
+    CHECK_STATUS(mcl_contact_commit_repeat(&c, MIG_B, SESS, NULL),
+                 MCL_LINK_ERR_INVALID_ARGUMENT);
+}
+
+/*
  * Documents the LIMIT of this module rather than a capability of it.
  *
  * Everything above crossed an observable medium in the clear. An attacker that
@@ -508,6 +651,8 @@ int main(void)
     test_refusals();
     test_closed_contact_is_inert();
     test_repeated_migration();
+    test_lost_confirm_recovers_by_retransmission();
+    test_commit_repeat_is_narrow();
     test_observer_is_indistinguishable();
 
     printf("mcl_link_contact: %d checks passed\n", g_checks);

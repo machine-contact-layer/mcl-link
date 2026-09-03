@@ -163,6 +163,14 @@ typedef struct {
     uint8_t  peer_ref_valid;
     uint8_t  session_valid;
     uint16_t migration_count;
+
+    /*
+     * The migration reference of the most recently completed transport change,
+     * retained after the pending transaction is cleared so that a COMMIT
+     * retransmitted by a peer whose CONFIRM was lost can still be answered.
+     * See mcl_contact_commit_repeat. Zero when no migration has completed.
+     */
+    uint32_t completed_migration_ref;
 } mcl_contact_t;
 
 /*
@@ -286,6 +294,43 @@ mcl_link_status_t mcl_contact_commit_confirm(
     mcl_contact_t *contact,
     uint32_t migration_ref,
     uint32_t session_ref);
+
+/*
+ * Should a COMMIT that arrives with no migration in progress be answered with
+ * CONFIRM again?
+ *
+ * WHY THIS EXISTS
+ *
+ * Suppose A sends COMMIT, B accepts it, completes the migration and replies
+ * CONFIRM -- and the CONFIRM is lost. B is now on the new transport. A is still
+ * COMMITTING, eventually gives up, and returns to the old transport, which is
+ * the correct behaviour for a migration that failed. But B's did not fail. The
+ * two machines now disagree about which transport carries the contact, and
+ * nothing in the sequence corrects it. No adversary is involved; one dropped
+ * frame is enough.
+ *
+ * An abort message does not fix this, because the peers are no longer on a
+ * common transport to abort over. Retransmission does: A resends COMMIT, and B
+ * must be able to answer it a second time. That requires B to remember the
+ * transaction it just completed, which is why `completed_migration_ref`
+ * survives the clearing of the pending transaction. TCP and QUIC both keep
+ * exactly this kind of short memory, for exactly this reason.
+ *
+ * Sets *reconfirm to 1 only when the contact is ACTIVE, no migration is in
+ * progress, and both references match the migration that most recently
+ * completed. The caller then re-sends CONFIRM.
+ *
+ * This function changes nothing. Re-confirming must not re-run a migration, and
+ * a repeated COMMIT must not become a way to make a settled contact move again.
+ * It also establishes nothing about who sent the COMMIT: the references crossed
+ * an observable medium, so a listener can replay them and be answered. The
+ * answer only restates a transport change that already happened.
+ */
+mcl_link_status_t mcl_contact_commit_repeat(
+    const mcl_contact_t *contact,
+    uint32_t migration_ref,
+    uint32_t session_ref,
+    uint8_t *reconfirm);
 
 /*
  * Abandon a migration at any stage and remain on the current transport.

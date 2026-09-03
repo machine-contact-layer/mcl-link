@@ -6,7 +6,8 @@ option(MCL_LINK_BUILD_TESTS "Build host-side reference tests" ON)
 add_library(mcl_link STATIC
     src/link.c
     src/contact.c
-    src/rendezvous.c)
+    src/rendezvous.c
+    src/handoff.c)
 target_include_directories(mcl_link PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set_target_properties(mcl_link PROPERTIES
     C_STANDARD 99
@@ -40,6 +41,14 @@ if(MCL_LINK_BUILD_TESTS)
         C_EXTENSIONS NO)
     add_test(NAME mcl_link_rendezvous COMMAND mcl_link_test_rendezvous)
 
+    add_executable(mcl_link_test_handoff tests/test_handoff.c)
+    target_link_libraries(mcl_link_test_handoff PRIVATE mcl_link)
+    set_target_properties(mcl_link_test_handoff PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO)
+    add_test(NAME mcl_link_handoff COMMAND mcl_link_test_handoff)
+
     add_executable(mcl_link_test_frame tests/test_link_frame.c)
     target_link_libraries(mcl_link_test_frame PRIVATE mcl_link)
     set_target_properties(mcl_link_test_frame PROPERTIES
@@ -47,6 +56,20 @@ if(MCL_LINK_BUILD_TESTS)
         C_STANDARD_REQUIRED YES
         C_EXTENSIONS NO)
     add_test(NAME mcl_link_frame COMMAND mcl_link_test_frame)
+
+    # Pins the PUBLISHED vectors against the decoder. test_handoff.c mirrors
+    # them as C arrays, which proves nothing about the JSON an independent
+    # implementer would download; the two could drift invisibly.
+    add_executable(mcl_link_validate_handoff_vectors
+        tools/validate_handoff_vectors.c)
+    target_link_libraries(mcl_link_validate_handoff_vectors PRIVATE mcl_link)
+    set_target_properties(mcl_link_validate_handoff_vectors PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO)
+    add_test(NAME mcl_link_handoff_vectors
+        COMMAND mcl_link_validate_handoff_vectors
+        "${CMAKE_CURRENT_SOURCE_DIR}/conformance/vectors/handoff-v0.1.json")
 
     add_executable(mcl_link_validate_transport tools/validate_transport_registry.c)
     set_target_properties(mcl_link_validate_transport PROPERTIES

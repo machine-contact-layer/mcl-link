@@ -64,6 +64,39 @@ The Link frame's `frame_check` is a CRC-32. It detects accidental corruption and
 provides no protection against a deliberate modification. It is named so that it
 cannot be mistaken for a cryptographic mechanism.
 
+## Migration as an on-wire protocol
+
+`TRANSPORT_OFFER` and `TRANSPORT_ACCEPT` are Wire semantic objects with
+canonical bytes. The rest of the migration — `PATH_CHALLENGE`,
+`PATH_RESPONSE`, `COMMIT`, `CONFIRM` — belongs to Link, because it describes
+this Link's own change of transport and means nothing outside it.
+
+- [`spec/link-handoff-control-v0.1.md`](spec/link-handoff-control-v0.1.md) —
+  the normative bytes
+- [`registries/handoff-ops-v0.1.json`](registries/handoff-ops-v0.1.json) —
+  the operation registry
+- [`conformance/vectors/handoff-v0.1.json`](conformance/vectors/handoff-v0.1.json)
+  — positive and negative vectors
+- [`include/mcl/handoff.h`](include/mcl/handoff.h) — the codec
+- [`include/mcl/rendezvous.h`](include/mcl/rendezvous.h) — resolving the
+  `endpoint_token` to a real endpoint on the candidate transport
+
+Until this existed the four controls were local function calls, and the sequence
+diagram in `contact.h` named four messages that had no representation on any
+wire. **A hardware demonstration driven by direct calls to `mcl_contact_*` on
+both machines proves the radios work, not that the migration is specified.**
+
+Two decisions worth knowing before reading the spec:
+
+- **There is no ABORT.** Negative outcomes are expressed by absence and by the
+  caller-enforced validity of the offer, because this library has no clock. An
+  abort would add a faster path to a state the timeout already reaches, and one
+  an observer of the references could send.
+- **A lost `CONFIRM` is repaired by retransmission, not by abort.** Without it, a
+  single dropped frame leaves one peer on the new transport and the other back
+  on the old one, permanently, with no adversary involved. See §8 of the spec
+  and `mcl_contact_commit_repeat`.
+
 ## Status
 
 Private research repository. Pre-v0.1 candidate specification.

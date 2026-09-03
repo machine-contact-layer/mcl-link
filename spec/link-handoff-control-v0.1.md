@@ -1,0 +1,280 @@
+# MCL Link HANDOFF Control Payload v0.1
+
+**Status:** Research Draft
+**Layer:** Link
+**Frame class:** `HANDOFF` (8)
+**Control version:** 0
+**Registry:** `mcl-link/registries/handoff-ops-v0.1.json`
+**Reference implementation:** `mcl-link/include/mcl/handoff.h`, `mcl-link/src/handoff.c`
+
+This document is normative for the bytes. The reference implementation is
+subordinate to it: where they disagree, this document is correct and the code is
+a defect.
+
+---
+
+## 1. What this closes
+
+`mcl-link/spec/link-v0.md` §8 says a session may negotiate another transport,
+and `mcl/contact.h` describes the sequence that does it:
+
+```
+OLD TRANSPORT     TRANSPORT_OFFER   ->
+                  TRANSPORT_ACCEPT  <-
+
+CANDIDATE         PATH_CHALLENGE    ->
+                  PATH_RESPONSE     <-
+
+NEW TRANSPORT     COMMIT            ->
+                  CONFIRM           <-
+```
+
+The first pair are Wire semantic objects with canonical bytes and published
+conformance vectors. The second and third pairs had no encoding at all. They
+existed as local function calls, which means two implementations written from
+the specification could agree on the offer, agree on the acceptance, and then be
+unable to exchange one further byte of the migration.
+
+A hardware demonstration does not close this gap. A harness that calls
+`mcl_contact_*` on both machines proves the radios carry frames; it does not
+prove the migration is specified. **Direct in-process calls to the contact API
+are not on-wire migration and must never be recorded as such.**
+
+## 2. Layer ownership
+
+The four controls belong to Link, not Core.
+
+A Wire semantic object is something one machine *means* to another. It survives
+relay, storage and re-encoding under a different context, and means the same
+thing wherever it arrives. A handoff control means nothing outside the
+particular Link that is migrating: it describes that Link's own change of
+transport and is meaningless to a third party or to the same peers a minute
+later. Encoding it as a semantic object would place a purely local negotiation
+into the vocabulary every MCL implementation must agree on permanently, which
+the governing rule forbids — freeze only what future implementers must agree
+on, at the layer that owns it.
+
+`TRANSPORT_OFFER` and `TRANSPORT_ACCEPT` stay in Wire because they *are*
+meaning: one machine proposes a way to keep talking, and the other agrees.
+
+## 3. Carriage
+
+A control is carried as the **entire payload** of one Link frame whose
+`frame_class` is `HANDOFF` (8).
+
+- No other frame class may carry a handoff control. A receiver that finds one in
+  another class MUST reject the frame rather than interpret it: the class is
+  what tells a receiver which registry the payload's first bytes belong to, and
+  a payload that is interpreted under two classes is a payload with two
+  meanings.
+- A `HANDOFF` frame MUST NOT carry anything other than a control.
+- The frame's `payload_len` delimits the control exactly. There is no length
+  field inside the control and no padding.
+- The frame SHOULD set `MCL_LINK_FLAG_SESSION` with the same `session_ref` the
+  control carries. This is a redundancy the receiver MAY check, and a
+  disagreement between the two MUST be rejected. It is not a substitute for the
+  control's own `session_ref`: a frame's optional fields are selected by flags,
+  and a control must be interpretable from its own bytes.
+- Controls travel on the **candidate** transport, not the original one. That is
+  the point of validation: the sequence exists to prove the candidate works.
+
+## 4. Canonical layout
+
+Network byte order. All fields are fixed-width and unaligned reads are not
+required.
+
+```
+offset  size  field
+------  ----  -----------------------------------------------
+     0     1  control_version    = 0
+     1     1  operation          registry value
+     2     4  migration_ref      non-zero
+     6     4  session_ref        non-zero
+    10     8  challenge          PATH_CHALLENGE / PATH_RESPONSE only
+```
+
+| Operation | Value | Total size |
+|---|---|---|
+| `PATH_CHALLENGE` | 1 | 18 |
+| `PATH_RESPONSE` | 2 | 18 |
+| `COMMIT` | 3 | 10 |
+| `CONFIRM` | 4 | 10 |
+
+The operation determines the length exactly. A control whose length disagrees
+with its operation is malformed.
+
+### 4.1 Why both references appear on every control
+
+`migration_ref` identifies the transaction, so `session_ref` may look redundant.
+It is not.
+
+These controls arrive on a transport the contact has **not been using**. Before
+a receiver can check the transaction, it must decide which of possibly several
+contacts a freshly arrived frame belongs to. `session_ref` answers *which
+contact*; `migration_ref` answers *which transport change of that contact*.
+Carrying only the transaction reference would force a receiver to search its
+contacts by transaction, which is precisely the cross-contact ambiguity that
+lets one contact's transaction be applied to another.
+
+Both are zero-forbidden, so a zeroed buffer can never decode as a valid control.
+
+### 4.2 What the references are not
+
+`migration_ref`, `session_ref` and the challenge all cross an observable medium
+in the clear. Anyone within range can read them and quote them back. A peer that
+completes this entire sequence has demonstrated **reachability on the candidate
+path and nothing else**. It has not demonstrated that it is the machine the
+contact began with.
+
+The challenge should be unpredictable so that guessing it is harder than
+receiving the frame that contains it. That is race hardening, not a security
+property.
+
+## 5. Decoding rules
+
+A decoder MUST apply these in order and MUST NOT interpret a control that fails
+any of them.
+
+1. Fewer than 10 bytes → **truncated**. The operation is not yet readable, so
+   the required length is not yet knowable.
+2. `control_version` ≠ 0 → **incompatible version**. Checked before the
+   operation, so that a future control version is reported as a version
+   mismatch rather than as an unknown operation. That distinction is what lets a
+   peer report "I am too old" instead of "you are malformed".
+3. `operation` not assigned in the registry → **rejected**. Every handoff
+   operation is critical (§6).
+4. Length ≠ the length the operation requires → **truncated** if short,
+   **rejected** if long. Trailing bytes are a malformation, not a framing
+   question: the frame already declared its payload length, so a control that
+   does not fill it means the two ends disagree about the format.
+5. `migration_ref` = 0 or `session_ref` = 0 → **rejected**.
+
+The reference implementation maps these to `MCL_LINK_ERR_TRUNCATED`,
+`MCL_LINK_ERR_INCOMPATIBLE_VERSION` and `MCL_LINK_ERR_RANGE`. The distinction
+between truncation and malformation is the same one the Link frame decoder
+makes, and for the same reason: a stream carriage must be able to tell "more
+bytes may complete this" from "these bytes can never be valid".
+
+A control that decodes is not thereby accepted. It is then checked against the
+contact state (§7), which is a separate step and rejects for separate reasons.
+
+## 6. Criticality and extension
+
+**Every handoff operation is critical.** An implementation that does not
+recognise an operation MUST reject the control rather than skip it. The assigned
+operations are exactly the steps that move the state machine; skipping one would
+mean continuing a migration whose steps were not performed.
+
+`control_version` changes only if the fixed header changes shape. A new
+operation is added by assigning a new registry value, not by incrementing the
+version.
+
+Operation ranges: `0` reserved permanently; `1–4` assigned; `5–191`
+Specification Required; `192–255` Experimental Use. An implementation not party
+to an experiment rejects an Experimental operation exactly as it rejects an
+unassigned one, which is the correct outcome and not a failure.
+
+## 7. State rules
+
+| Operation | Accepted in | Result |
+|---|---|---|
+| `PATH_CHALLENGE` | `AGREED` | → `VALIDATING`, challenge recorded |
+| `PATH_RESPONSE` | `VALIDATING` | → `VALIDATED` if refs and echo match exactly |
+| `COMMIT` | `VALIDATED` | → `COMMITTING`, then `ACTIVE` on the candidate; reply `CONFIRM` |
+| `COMMIT` | `ACTIVE` | retransmission only — see §8 |
+| `CONFIRM` | `COMMITTING` | → `ACTIVE` on the candidate |
+
+A control received in any other state MUST be refused without changing state.
+Specifically:
+
+- `COMMIT` before `VALIDATED` MUST be refused. Committing an unvalidated path is
+  the defect the state machine exists to prevent.
+- `CONFIRM` before `COMMITTING` MUST be refused.
+- A `PATH_RESPONSE` whose echo, `migration_ref` or `session_ref` does not match
+  MUST be refused, and MUST leave the contact in `VALIDATING` rather than
+  failing the migration — a wrong response is one wrong frame on a shared
+  medium, not proof that the path is bad.
+- A control carrying a `migration_ref` from an abandoned transaction MUST be
+  refused. This is the case `migration_ref` exists for: without it, a delayed
+  control from an abandoned attempt is indistinguishable from the live one,
+  because transport and profile normally repeat across a retry.
+
+**No control changes link state on reception alone.** Receiving a handoff
+control grants no identity, authenticity, authority, trust or authorization, and
+a refused or malformed control MUST NOT damage the old working path. Charter
+§2.3 and §2.11.
+
+## 8. Retransmission, and the lost CONFIRM
+
+Consider A sending `COMMIT`, B accepting it, completing the migration, and
+replying `CONFIRM` — and the `CONFIRM` is lost.
+
+B is on the new transport. A is still `COMMITTING`, eventually gives up, and
+returns to the old transport, which is correct behaviour for a migration that
+failed. But B's did not fail. **The two machines now disagree about which
+transport carries the contact, and no adversary is involved: one dropped frame
+is enough.**
+
+An abort operation does not fix this, because the peers are no longer on a
+common transport to abort over. Retransmission does.
+
+> A peer that has completed a migration MUST answer a `COMMIT` that matches that
+> completed transaction with `CONFIRM` again, and MUST NOT change state when it
+> does.
+
+This requires remembering the reference of the most recently completed
+transaction after the pending one is cleared. TCP and QUIC both keep exactly
+this kind of short memory, for exactly this reason. The reference implementation
+exposes it as `mcl_contact_commit_repeat`, which is `const` because
+re-confirming must not re-run anything: a repeated `COMMIT` must never become a
+way to make a settled contact move again.
+
+A replayed `COMMIT` from a listener is answered the same way, and correctly so:
+the answer restates a transport change that already happened and reveals nothing
+the listener did not already hear.
+
+Retransmission of `PATH_CHALLENGE` and `PATH_RESPONSE` needs no such memory,
+because both are re-sendable from the state they are already in.
+
+## 9. Why there is no ABORT
+
+Deliberately not assigned.
+
+Negative outcomes in MCL are already expressed by absence: an offer that is not
+accepted simply is not accepted, and `mcl_contact_record_offer` carries a
+`validity` the caller enforces, because this library has no clock and must not
+have one. An abort would add a second and faster path to a state the timeout
+already reaches — and one that an observer of the references could send in order
+to cancel a migration, turning a dropped frame into a cancelled one.
+
+The cost is convergence latency on a failed migration, paid by the machine that
+was already failing to migrate. If a deployment demonstrates that this latency
+matters, an abort can be assigned an operation value later without a version
+change (§6).
+
+## 10. Conformance
+
+Vectors: `mcl-link/conformance/vectors/handoff-v0.1.json`, mirrored as byte
+arrays in `mcl-link/tests/test_handoff.c`.
+
+Positive: one vector per operation.
+
+Negative, all required to be refused: truncated header; truncated challenge;
+trailing byte; reserved operation 0; unassigned operation 5; Experimental
+operation 192; wrong control version; zero `migration_ref`; zero `session_ref`;
+a `COMMIT` sized as though it carried a challenge; a `PATH_CHALLENGE` sized as
+though it did not.
+
+State-level negatives are in `test_contact.c`: stale `migration_ref`, wrong
+`session_ref`, wrong challenge echo, `COMMIT` before `VALIDATED`, `CONFIRM`
+before `COMMITTING`, and duplicate `COMMIT` after completion.
+
+Once published, a vector file is never edited. A legitimate byte change gets a
+new version.
+
+## 11. Status
+
+This is a research draft at Link major 0. It has passed no independent
+implementation and has crossed no radio. Software conformance and physical
+evidence advance separately: see `mcl-core` conformance classes C0–C6 and the
+per-transport evidence ladder.
