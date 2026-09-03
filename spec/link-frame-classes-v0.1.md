@@ -76,6 +76,12 @@ now would freeze a shape chosen before the thing that uses it exists.
 Until then, an implementation MUST NOT assume a Link control payload in these
 classes.
 
+**Disposition for Link major 1:** these two classes cannot ship in this state.
+`link-class-disposition-v1.md` §3 requires that they either carry the minimum
+capability/version exchange's control payload, or become **reserved and
+refused** exactly as `ADAPT` is. A class that is accepted while its semantics
+are only implied is what a Stable major must not contain.
+
 ### 3.3 ACK (4) and NACK (5)
 
 Both carry a fixed 4-byte control:
