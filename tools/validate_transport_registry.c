@@ -8,6 +8,7 @@
 #define MAX_FILE_SIZE 16384
 #define MAX_ASSIGNMENTS 64
 #define MAX_STR_LEN 64
+#define MAX_DESC_LEN 512
 
 typedef struct {
     int id;
@@ -107,6 +108,7 @@ int main(int argc, char **argv)
     }
     p = strchr(p, '[');
     if (!p) {
+        fprintf(stderr, "assignments is not an array\n");
         return 1;
     }
     ++p;
@@ -118,6 +120,7 @@ int main(int argc, char **argv)
             break;
         }
         if (*p != '{') {
+            fprintf(stderr, "Expected object at start of assignment\n");
             return 1;
         }
         ++p;
@@ -126,9 +129,15 @@ int main(int argc, char **argv)
         while (p < end && *p != '}') {
             char key[MAX_STR_LEN];
             p = parse_string(p, end, key, sizeof(key));
-            if (!p) return 1;
+            if (!p) {
+                fprintf(stderr, "Malformed key in assignment object\n");
+                return 1;
+            }
             p = skip_ws(p, end);
-            if (p >= end || *p != ':') return 1;
+            if (p >= end || *p != ':') {
+                fprintf(stderr, "Expected ':' after key '%s'\n", key);
+                return 1;
+            }
             ++p;
 
             if (strcmp(key, "id") == 0) {
@@ -143,7 +152,21 @@ int main(int argc, char **argv)
             } else if (strcmp(key, "owner_repo") == 0) {
                 p = parse_string(p, end, a.owner_repo, sizeof(a.owner_repo));
                 if (!p) return 1;
+            } else if (strcmp(key, "family") == 0 || strcmp(key, "detail") == 0) {
+                /*
+                 * Descriptive metadata. Parsed so that a malformed value is
+                 * still caught, then discarded: it carries no assignment.
+                 * Keys are matched explicitly rather than skipped generically,
+                 * so that a typo in an assignment key is still an error.
+                 */
+                char discard[MAX_DESC_LEN];
+                p = parse_string(p, end, discard, sizeof(discard));
+                if (!p) {
+                    fprintf(stderr, "Malformed or oversize value for key '%s'\n", key);
+                    return 1;
+                }
             } else {
+                fprintf(stderr, "Unknown key '%s' in assignment object\n", key);
                 return 1;
             }
 
@@ -153,6 +176,7 @@ int main(int argc, char **argv)
             }
         }
         if (p >= end || *p != '}') {
+            fprintf(stderr, "Unterminated assignment object\n");
             return 1;
         }
         ++p;

@@ -4,7 +4,8 @@ project(mcl_link LANGUAGES C)
 option(MCL_LINK_BUILD_TESTS "Build host-side reference tests" ON)
 
 add_library(mcl_link STATIC
-    src/link.c)
+    src/link.c
+    src/contact.c)
 target_include_directories(mcl_link PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set_target_properties(mcl_link PROPERTIES
     C_STANDARD 99
@@ -21,6 +22,14 @@ if(MCL_LINK_BUILD_TESTS)
         C_STANDARD_REQUIRED YES
         C_EXTENSIONS NO)
     add_test(NAME mcl_link_test COMMAND mcl_link_test_link)
+
+    add_executable(mcl_link_test_contact tests/test_contact.c)
+    target_link_libraries(mcl_link_test_contact PRIVATE mcl_link)
+    set_target_properties(mcl_link_test_contact PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO)
+    add_test(NAME mcl_link_contact COMMAND mcl_link_test_contact)
 
     add_executable(mcl_link_test_frame tests/test_link_frame.c)
     target_link_libraries(mcl_link_test_frame PRIVATE mcl_link)

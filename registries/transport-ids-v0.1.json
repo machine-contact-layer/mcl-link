@@ -1,7 +1,9 @@
 {
   "registry_version": "0.1-draft",
   "status": "provisional",
+  "purpose": "Assigned values for the 8-bit transport_id field used by TRANSPORT_CAPABILITY, TRANSPORT_OFFER, TRANSPORT_ACCEPT, CHANNEL_STATE and by Link contact migration. Two independent implementations cannot complete a transport change without agreeing on these values, which is why they are registered rather than left to convention.",
   "field_width_bits": 8,
+  "field_width_reference": "mcl-wire/research/field-width-review-v0.2.md",
   "allocation_policy": {
     "0x00": "Reserved / no binding selected",
     "0x01_0x7F": "MCL Standards Action",
@@ -11,14 +13,18 @@
     "0xFF": "Extended transport identifier escape"
   },
   "assignments": [
-    {"id": 1, "name": "MCL_AP", "status": "provisional", "owner_repo": "mcl-ap"},
-    {"id": 2, "name": "MCL_IP", "status": "provisional", "owner_repo": "mcl-ip"},
-    {"id": 3, "name": "MCL_BLE", "status": "provisional", "owner_repo": "mcl-ble"},
-    {"id": 4, "name": "MCL_UWB", "status": "provisional", "owner_repo": "mcl-uwb"}
+    {"id": 1, "name": "MCL_AP", "status": "provisional", "owner_repo": "mcl-ap", "family": "acoustic", "detail": "Airborne acoustic carriage. The rendezvous medium that needs no prior network. Band, modulation and rate are profile concerns; AP-B0 is not selected."},
+    {"id": 2, "name": "MCL_IP", "status": "provisional", "owner_repo": "mcl-ip", "family": "internet_protocol", "detail": "IP carriage over any underlying link, Wi-Fi and Ethernet alike. Datagram carriage maps one frame per datagram; stream carriage is length-prefixed. The underlying link technology is deliberately not part of the identifier."},
+    {"id": 3, "name": "MCL_BLE", "status": "provisional", "owner_repo": "mcl-ble", "family": "bluetooth_low_energy", "detail": "Bluetooth Low Energy, connectionless advertising or connected GATT carriage."},
+    {"id": 4, "name": "MCL_UWB", "status": "provisional", "owner_repo": "mcl-uwb", "family": "ultra_wideband", "detail": "Ultra-wideband carriage. Ranging measurements from this family are proximity EVIDENCE and never proof of co-presence."}
   ],
   "notes": [
     "Assignments are provisional until Candidate Specification maturity.",
     "A transport identifier names an MCL binding, not a hardware vendor or security level.",
-    "Profile identifiers are transport-scoped and governed by the owning binding."
+    "Profile identifiers are transport-scoped and governed by the owning binding.",
+    "A transport_id names a transport FAMILY, not a profile, radio, frequency or data rate, so that a family assignment never has to be revisited when its physical parameters change. Architecture Charter 2.8.",
+    "A transport_id says nothing about security. A family that typically offers link encryption is not thereby an authenticated peer. Architecture Charter 2.11.",
+    "An implementation receiving an unassigned transport_id MUST NOT guess. It rejects the offer and may continue on its current transport.",
+    "AUTHORITATIVE SOURCE. Do not infer assignments from conformance-vector provenance. mcl-wire/conformance/vectors/tier0-v0.1.json borrowed source_ref and endpoint_token from research corpus scenario S14, which describes a BLE handoff, while encoding transport_id 2 = MCL_IP. The vector bytes are correct; the borrowed values are not an assignment. This registry and the binding headers agree and are authoritative. mcl-link/tests/test_transport_registry_binding.c pins that agreement so it cannot drift again."
   ]
 }
