@@ -18,21 +18,45 @@ It is transport-profile neutral. MCL-AP, MCL-IP, MCL-BLE, MCL-UWB, and future bi
 - fallback and transport handoff
 - extension negotiation
 
-## Core state machine
+## Two state machines, and neither derives the other
+
+A node holds two, and they answer different questions. Conflating them is the
+mistake this section exists to prevent.
+
+**`mcl_link_t` — the protocol lifecycle.** Nine states, defined normatively in
+[`spec/link-v0.md`](spec/link-v0.md):
 
 ```text
-IDLE
-  ↓ discovery
-CONTACT
-  ↓ capability exchange
-NEGOTIATING
-  ↓ profile/transport agreement
-ESTABLISHED
-  ↕ adaptation / QoS / context
-HANDOFF or FALLBACK
-  ↓
-ESTABLISHED / IDLE
+IDLE → DISCOVERED → CAPABILITIES → NEGOTIATING → ESTABLISHED
+                                                   ↕
+                                    ADAPTING / HANDOFF / FALLBACK
+                                                   ↓
+                                                 CLOSED
 ```
+
+**`mcl_contact_t` — transport continuity.** Which medium carries this contact,
+and is a change of medium under way:
+
+```text
+ACTIVE → OFFERED → AGREED → VALIDATING → VALIDATED → COMMITTING → ACTIVE
+                                                                    ↓
+                                                                  CLOSED
+```
+
+**Neither implies the other, and neither is derived from the other.** A machine
+can be settled on a transport having negotiated nothing; it can be
+mid-negotiation with no migration in sight. An earlier revision provided a
+function claiming a mapping between them, and it was removed: a third source of
+truth beside two independently mutable ones drifts from both.
+
+They cross in exactly **one** place, and the SDK owns it — a migration may only
+be driven while the lifecycle is `ESTABLISHED` or `HANDOFF`, and the lifecycle
+may not leave those states while a migration is outstanding. Recorded in
+[`spec/link-contact-ownership-v0.1.md`](spec/link-contact-ownership-v0.1.md).
+
+Sending and receiving ordinary frames is **not** gated on the lifecycle. First
+contact necessarily happens before establishment, and a layer whose first frame
+required an established session could never send one.
 
 Acoustic-specific sounding and spectrum convergence are defined in `mcl-ap`, not here.
 
