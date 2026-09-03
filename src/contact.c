@@ -210,6 +210,12 @@ mcl_link_status_t mcl_contact_record_offer(
     if (transport_id == MCL_CONTACT_TRANSPORT_RESERVED) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
+    if (profile_id == MCL_CONTACT_PROFILE_RESERVED) {
+        /* Every transport's profile registry reserves zero so an uninitialised
+         * field names no profile. Which profiles are acceptable is deployment
+         * policy; that this one is not a profile at all is not. */
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
     if (contact->state == MCL_CONTACT_STATE_OFFERED &&
         migration_ref == contact->pending_migration_ref) {
         /*
@@ -272,6 +278,12 @@ mcl_link_status_t mcl_contact_resolve_offer_collision(
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
     if (peer_transport_id == MCL_CONTACT_TRANSPORT_RESERVED) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+    if (peer_profile_id == MCL_CONTACT_PROFILE_RESERVED) {
+        /* An offer this malformed is not a contender for the migration-
+         * controller role; adopting it on PEER_WINS would install a profile
+         * that names nothing. */
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
     if (contact->state != MCL_CONTACT_STATE_OFFERED) {

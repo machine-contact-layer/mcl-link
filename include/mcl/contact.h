@@ -75,6 +75,20 @@ extern "C" {
 #define MCL_CONTACT_TRANSPORT_BLE      3u
 #define MCL_CONTACT_TRANSPORT_UWB      4u
 
+/*
+ * Profile identifiers are TRANSPORT-SCOPED: profile 1 under IP and profile 1
+ * under BLE are unrelated assignments and must never be compared. This module
+ * therefore does not know what any profile means, and deciding whether a given
+ * one is acceptable is deployment policy (charter 2.10.1).
+ *
+ * It knows one thing about them: zero is permanently reserved in every
+ * transport's profile registry, for the same reason transport zero is, so that
+ * a zeroed or uninitialised field names no profile. An offer carrying profile
+ * zero is malformed by the registries' own rule, and that rule was stated in
+ * all four registries while nothing anywhere enforced it.
+ */
+#define MCL_CONTACT_PROFILE_RESERVED 0u
+
 /* Reserved sentinels, so an uninitialised field can never match a live value. */
 #define MCL_CONTACT_SESSION_NONE   0u
 #define MCL_CONTACT_MIGRATION_NONE 0u

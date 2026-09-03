@@ -964,6 +964,45 @@ static void test_every_control_survives_duplication(void)
     CHECK_TRUE(a.migration_count == 1u);
 }
 
+/*
+ * Profile zero is reserved in every transport's profile registry so that an
+ * uninitialised field names no profile. All four registries said so and nothing
+ * enforced it, which meant a zeroed offer was a legal migration proposal.
+ *
+ * Which profiles are ACCEPTABLE stays deployment policy. That zero is not a
+ * profile at all does not.
+ */
+static void test_reserved_profile_is_refused(void)
+{
+    mcl_contact_t c;
+    mcl_contact_collision_t outcome;
+
+    CHECK_STATUS(mcl_contact_begin(&c, MCL_CONTACT_ROLE_INITIATOR, 0x11111111u,
+                                   MCL_CONTACT_TRANSPORT_AP), MCL_LINK_OK);
+
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE,
+                                          MCL_CONTACT_PROFILE_RESERVED,
+                                          0xD00D0001u, 30u),
+                 MCL_LINK_ERR_INVALID_ARGUMENT);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_ACTIVE);
+    CHECK_TRUE(c.pending_migration_ref == MCL_CONTACT_MIGRATION_NONE);
+
+    /* A well-formed offer still works, so the check refuses the reserved value
+     * rather than the field. */
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+
+    /* And a colliding peer offer naming it is not a contender either: adopting
+     * it on PEER_WINS would install a profile that names nothing. */
+    CHECK_STATUS(mcl_contact_resolve_offer_collision(&c, 0x99999999u, MIG_B,
+                                                     MCL_CONTACT_TRANSPORT_IP,
+                                                     MCL_CONTACT_PROFILE_RESERVED,
+                                                     0xD00D0002u, 30u, &outcome),
+                 MCL_LINK_ERR_INVALID_ARGUMENT);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_OFFERED);
+    CHECK_TRUE(c.pending_migration_ref == MIG_A);
+}
+
 int main(void)
 {
     test_acoustic_to_ble_migration();
@@ -982,6 +1021,7 @@ int main(void)
     test_commit_accept_never_enters_committing();
     test_every_control_survives_duplication();
     test_observer_is_indistinguishable();
+    test_reserved_profile_is_refused();
 
     printf("mcl_link_contact: %d checks passed\n", g_checks);
     printf("NOTE: path validation proves reachability, not identity.\n");
