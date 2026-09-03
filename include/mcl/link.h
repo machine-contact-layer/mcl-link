@@ -216,7 +216,27 @@ typedef struct {
     uint32_t session_ref;       /* meaningful only with MCL_LINK_FLAG_SESSION */
     uint16_t sequence;          /* meaningful only with MCL_LINK_FLAG_SEQUENCE */
     uint16_t freshness_ms;      /* meaningful only with MCL_LINK_FLAG_FRESHNESS */
-    const uint8_t *payload;     /* canonical Wire bytes; borrowed, never owned */
+    /*
+     * The class-defined canonical payload. Borrowed, never owned.
+     *
+     * NOT always canonical Wire bytes, which is what this said before HANDOFF
+     * controls existed. The frame class selects which contract the payload
+     * follows, and an implementation that assumes "payload means Wire object"
+     * has the wrong layering model:
+     *
+     *   CONTACT, DATA          a canonical Wire semantic object
+     *   CAPABILITY, NEGOTIATION  a Wire object today; own contracts pending
+     *   HANDOFF                a canonical Link handoff control (mcl/handoff.h)
+     *   ACK, NACK, KEEPALIVE,
+     *   ADAPT, CLOSE           no payload contract defined yet; see
+     *                          spec/link-v0.md section 4
+     *
+     * A payload may only be interpreted under the contract its class names.
+     * Reading one class's payload under another's rules gives one set of bytes
+     * two meanings, which is how independent implementations disagree while
+     * both believe they decoded successfully.
+     */
+    const uint8_t *payload;
     uint16_t payload_len;
 } mcl_link_frame_t;
 

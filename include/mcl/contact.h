@@ -280,8 +280,34 @@ mcl_link_status_t mcl_contact_validation_response(
     uint32_t session_ref,
     const uint8_t echo[MCL_CONTACT_CHALLENGE_SIZE]);
 
-/* Send the commit for a validated candidate path. */
+/*
+ * Begin committing a validated candidate path. Called by the peer that SENDS
+ * COMMIT, immediately before it transmits.
+ *
+ * Entering COMMITTING is the point of no return. From here this machine cannot
+ * know whether the peer received the commit, so it cannot know which transport
+ * the peer is on. See mcl_contact_abandon_migration.
+ */
 mcl_link_status_t mcl_contact_commit_begin(mcl_contact_t *contact);
+
+/*
+ * Accept a commit received on the candidate path, in one step. Called by the
+ * peer that RECEIVES COMMIT, which then sends CONFIRM.
+ *
+ * This exists so that COMMITTING has exactly one meaning: "I sent COMMIT and do
+ * not know whether it arrived." An earlier revision had the receiving peer pass
+ * through COMMITTING too, on its way from VALIDATED to ACTIVE. That made the
+ * state ambiguous -- rollback is safe for a peer that has not yet sent CONFIRM
+ * and unsafe for a peer awaiting one -- and the two cases cannot be told apart
+ * from the state alone.
+ *
+ * The transaction is checked before anything moves, so a commit that does not
+ * match leaves the contact in VALIDATED with the old transport intact.
+ */
+mcl_link_status_t mcl_contact_commit_accept(
+    mcl_contact_t *contact,
+    uint32_t migration_ref,
+    uint32_t session_ref);
 
 /*
  * Confirm the commit; the candidate becomes the active transport.
@@ -333,15 +359,45 @@ mcl_link_status_t mcl_contact_commit_repeat(
     uint8_t *reconfirm);
 
 /*
- * Abandon a migration at any stage and remain on the current transport.
+ * Abandon a migration and remain on the current transport.
  *
- * Valid from OFFERED, AGREED, VALIDATING, VALIDATED and COMMITTING, because a
- * migration can fail at any of them: the offer expires, the peer declines, the
- * candidate path never validates, or the commit is never confirmed.
+ * Valid from OFFERED, AGREED, VALIDATING and VALIDATED. In all of those, no
+ * COMMIT has been sent, so the peer cannot have switched and returning to the
+ * old transport is a statement about this machine alone. A failed migration
+ * must never destroy the contact: the machines can still talk on the medium
+ * where they actually met, and going back there is the correct outcome rather
+ * than a degraded one.
  *
- * A failed migration must never destroy the contact. The machines can still
- * talk on the medium where they actually met, and returning there is the
- * correct outcome rather than a degraded one.
+ * REFUSED FROM COMMITTING, AND THAT IS THE POINT.
+ *
+ * Once COMMIT has been sent, this machine cannot know whether the peer received
+ * it. If it did, the peer is already on the new transport. Rolling back here
+ * would be asserting something unknowable:
+ *
+ *     "I did not hear CONFIRM, therefore the peer did not commit."
+ *
+ * That inference is false on any unreliable channel, and acting on it produces
+ * exactly the split the retransmission rule exists to prevent -- one peer on
+ * the new transport, one back on the old, permanently. An earlier revision
+ * allowed this and simultaneously documented the divergence it caused, which
+ * was a contradiction rather than a policy.
+ *
+ * This is the ordinary uncertainty of distributed commit: no finite exchange
+ * of acknowledgements lets the sender of the last message know it arrived. MCL
+ * resolves it the way protocols that must actually work do -- by making the
+ * decision irrevocable once transmitted, and retrying until it is confirmed.
+ *
+ * From COMMITTING there are exactly two honest outcomes:
+ *
+ *   - retransmit COMMIT until CONFIRM arrives. The peer answers a repeated
+ *     COMMIT idempotently (mcl_contact_commit_repeat), so this is safe however
+ *     many times it takes.
+ *   - give up on the CONTACT, not on the migration: mcl_contact_close. The
+ *     contact is lost, which is honest, rather than silently continuing on a
+ *     transport the peer may have left.
+ *
+ * The old path may stay physically open throughout as a fallback for the
+ * caller's own traffic. What is forbidden is declaring the migration failed.
  */
 mcl_link_status_t mcl_contact_abandon_migration(mcl_contact_t *contact);
 

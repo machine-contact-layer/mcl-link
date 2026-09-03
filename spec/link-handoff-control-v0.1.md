@@ -180,9 +180,16 @@ unassigned one, which is the correct outcome and not a failure.
 |---|---|---|
 | `PATH_CHALLENGE` | `AGREED` | → `VALIDATING`, challenge recorded |
 | `PATH_RESPONSE` | `VALIDATING` | → `VALIDATED` if refs and echo match exactly |
-| `COMMIT` | `VALIDATED` | → `COMMITTING`, then `ACTIVE` on the candidate; reply `CONFIRM` |
+| `COMMIT` | `VALIDATED` | → `ACTIVE` on the candidate directly; reply `CONFIRM` |
 | `COMMIT` | `ACTIVE` | retransmission only — see §8 |
 | `CONFIRM` | `COMMITTING` | → `ACTIVE` on the candidate |
+
+**`COMMITTING` belongs to the sender of `COMMIT` alone.** A peer that receives
+`COMMIT` moves from `VALIDATED` to `ACTIVE` in one step and never occupies it.
+The state therefore means exactly one thing — *I sent a commit and do not know
+whether it arrived* — which is what makes the rule in §8.1 enforceable. A design
+in which both peers passed through `COMMITTING` cannot distinguish the peer that
+may safely roll back from the peer that may not, because they look identical.
 
 A control received in any other state MUST be refused without changing state.
 Specifically:
@@ -209,14 +216,51 @@ a refused or malformed control MUST NOT damage the old working path. Charter
 Consider A sending `COMMIT`, B accepting it, completing the migration, and
 replying `CONFIRM` — and the `CONFIRM` is lost.
 
-B is on the new transport. A is still `COMMITTING`, eventually gives up, and
-returns to the old transport, which is correct behaviour for a migration that
-failed. But B's did not fail. **The two machines now disagree about which
-transport carries the contact, and no adversary is involved: one dropped frame
-is enough.**
+B is on the new transport. A is still `COMMITTING`. **The two machines disagree
+about which transport carries the contact, and no adversary is involved: one
+dropped frame is enough.**
 
 An abort operation does not fix this, because the peers are no longer on a
 common transport to abort over. Retransmission does.
+
+### 8.1 A sent commit is irrevocable
+
+> Once `COMMIT` has been transmitted, a peer MUST NOT unilaterally abandon the
+> migration and return to the old transport.
+
+An earlier revision of this design allowed exactly that, and described the
+sender as *eventually giving up and returning to the old transport* — in the
+same document that explained the divergence doing so produces. That was a
+contradiction rather than a policy, and it is resolved here.
+
+The reason is that abandoning encodes an inference the sender cannot make:
+
+```
+    "I did not hear CONFIRM,  therefore  the peer did not commit."
+```
+
+On an unreliable channel that is simply false. The absence of an
+acknowledgement is evidence about the channel, not about the peer. This is the
+ordinary uncertainty of distributed commit — no finite exchange lets the sender
+of the last message learn that it arrived — and MCL resolves it the way
+protocols that must work in the field do: the decision becomes irrevocable when
+it is transmitted, and is retried until confirmed.
+
+From `COMMITTING` there are exactly two admissible outcomes:
+
+1. **Retransmit `COMMIT`** until `CONFIRM` arrives. §8 makes repeated commits
+   idempotent, so this is safe however many times it takes.
+2. **Declare the contact lost.** Not the migration — the contact. That is
+   honest, and it is what a peer does when a candidate path has genuinely died.
+
+The old transport MAY remain physically open throughout, and the caller MAY
+keep using it for its own traffic. What is forbidden is *declaring the
+migration failed* while the peer may already have completed it.
+
+Before `COMMIT` is sent — in `OFFERED`, `AGREED`, `VALIDATING` and `VALIDATED` —
+abandonment is unconditionally safe, because the peer cannot have switched
+without having received a commit. The reference implementation enforces the
+split in `mcl_contact_abandon_migration`, which refuses from `COMMITTING`.
 
 > A peer that has completed a migration MUST answer a `COMMIT` that matches that
 > completed transaction with `CONFIRM` again, and MUST NOT change state when it

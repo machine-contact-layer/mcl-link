@@ -61,6 +61,133 @@ static void run_full_migration(
     CHECK_STATUS(mcl_contact_commit_confirm(c, migration_ref, session_ref), MCL_LINK_OK);
 }
 
+/*
+ * ONCE COMMIT IS SENT, ROLLING BACK IS A CLAIM THIS MACHINE CANNOT MAKE.
+ *
+ * From COMMITTING, "I did not hear CONFIRM" does not mean "the peer did not
+ * commit". If the peer received the commit it is already on the new transport,
+ * and returning to the old one produces exactly the split that
+ * test_lost_confirm_recovers_by_retransmission exists to repair. An earlier
+ * revision permitted this while documenting the divergence it caused.
+ */
+static void test_commit_is_irrevocable_once_sent(void)
+{
+    mcl_contact_t c;
+    uint8_t transport = 0u;
+
+    CHECK_STATUS(mcl_contact_begin(&c, MCL_CONTACT_ROLE_INITIATOR, 1u,
+                                   MCL_CONTACT_TRANSPORT_AP), MCL_LINK_OK);
+
+    /* Abandonment is safe at every stage before the commit is sent, because
+     * the peer cannot have switched without having received one. */
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_abandon_migration(&c), MCL_LINK_OK);
+
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE, 1u,
+                                   SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_abandon_migration(&c), MCL_LINK_OK);
+
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE, 1u,
+                                   SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_begin(&c, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_abandon_migration(&c), MCL_LINK_OK);
+
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE, 1u,
+                                   SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_begin(&c, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&c, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_VALIDATED);
+    CHECK_STATUS(mcl_contact_abandon_migration(&c), MCL_LINK_OK);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_ACTIVE);
+
+    /* Now go all the way to COMMITTING and try again. */
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_B, MCL_CONTACT_TRANSPORT_BLE,
+                                          1u, 0xD00D0002u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_B, MCL_CONTACT_TRANSPORT_BLE, 1u,
+                                   SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_begin(&c, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&c, MIG_B, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_begin(&c), MCL_LINK_OK);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_COMMITTING);
+
+    CHECK_STATUS(mcl_contact_abandon_migration(&c), MCL_LINK_ERR_INVALID_STATE);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_COMMITTING);
+    CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_OK);
+    CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_AP);
+
+    /* The two honest outcomes. Retransmitting until CONFIRM arrives: */
+    CHECK_STATUS(mcl_contact_commit_confirm(&c, MIG_B, SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_OK);
+    CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_BLE);
+
+    /* ...or giving up on the CONTACT rather than on the migration. */
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_IP,
+                                          1u, 0xD00D0003u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_IP, 1u,
+                                   SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_begin(&c, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&c, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_begin(&c), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_abandon_migration(&c), MCL_LINK_ERR_INVALID_STATE);
+    CHECK_STATUS(mcl_contact_close(&c), MCL_LINK_OK);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_CLOSED);
+}
+
+/*
+ * The receiving peer goes from VALIDATED straight to ACTIVE and never occupies
+ * COMMITTING, which is what makes the rollback rule above enforceable: the
+ * state then means exactly one thing.
+ */
+static void test_commit_accept_never_enters_committing(void)
+{
+    mcl_contact_t c;
+    uint8_t transport = 0u;
+
+    CHECK_STATUS(mcl_contact_begin(&c, MCL_CONTACT_ROLE_RESPONDER, 2u,
+                                   MCL_CONTACT_TRANSPORT_AP), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_record_offer(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE,
+                                          1u, 0xD00D0001u, 30u), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_agree(&c, MIG_A, MCL_CONTACT_TRANSPORT_BLE, 1u,
+                                   SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_begin(&c, CHALLENGE_A), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_validation_response(&c, MIG_A, SESS, CHALLENGE_A),
+                 MCL_LINK_OK);
+
+    /* A commit naming another transaction leaves the contact in VALIDATED with
+     * the old transport intact, not stranded partway through a switch. */
+    CHECK_STATUS(mcl_contact_commit_accept(&c, MIG_B, SESS),
+                 MCL_LINK_ERR_CONTEXT_MISMATCH);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_VALIDATED);
+    CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_OK);
+    CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_AP);
+
+    CHECK_STATUS(mcl_contact_commit_accept(&c, MIG_A, SESS + 1u),
+                 MCL_LINK_ERR_CONTEXT_MISMATCH);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_VALIDATED);
+
+    CHECK_STATUS(mcl_contact_commit_accept(&c, MIG_A, SESS), MCL_LINK_OK);
+    CHECK_TRUE(c.state == MCL_CONTACT_STATE_ACTIVE);
+    CHECK_STATUS(mcl_contact_active_transport(&c, &transport), MCL_LINK_OK);
+    CHECK_TRUE(transport == MCL_CONTACT_TRANSPORT_BLE);
+    CHECK_TRUE(c.migration_count == 1u);
+
+    /* Accepting a commit for a path that was never validated is refused. */
+    CHECK_STATUS(mcl_contact_commit_accept(&c, MIG_A, SESS),
+                 MCL_LINK_ERR_INVALID_STATE);
+    CHECK_STATUS(mcl_contact_commit_accept(NULL, MIG_A, SESS),
+                 MCL_LINK_ERR_INVALID_ARGUMENT);
+}
+
 /* Two peers meet acoustically and continue over BLE, with no cryptography
  * anywhere. This is the flow the whole project exists to make possible. */
 static void test_acoustic_to_ble_migration(void)
@@ -497,8 +624,7 @@ static void test_lost_confirm_recovers_by_retransmission(void)
 
     /* A sends COMMIT. B receives it and completes, replying CONFIRM. */
     CHECK_STATUS(mcl_contact_commit_begin(&a), MCL_LINK_OK);
-    CHECK_STATUS(mcl_contact_commit_begin(&b), MCL_LINK_OK);
-    CHECK_STATUS(mcl_contact_commit_confirm(&b, MIG_A, SESS), MCL_LINK_OK);
+    CHECK_STATUS(mcl_contact_commit_accept(&b, MIG_A, SESS), MCL_LINK_OK);
     CHECK_STATUS(mcl_contact_active_transport(&b, &b_transport), MCL_LINK_OK);
     CHECK_TRUE(b_transport == MCL_CONTACT_TRANSPORT_IP);
 
@@ -507,10 +633,19 @@ static void test_lost_confirm_recovers_by_retransmission(void)
     CHECK_STATUS(mcl_contact_active_transport(&a, &a_transport), MCL_LINK_OK);
     CHECK_TRUE(a_transport == MCL_CONTACT_TRANSPORT_BLE);
 
+    /*
+     * A cannot escape by abandoning: the peer may already have committed, and
+     * that is precisely the case here. Rolling back would make this divergence
+     * permanent instead of temporary.
+     */
+    CHECK_STATUS(mcl_contact_abandon_migration(&a), MCL_LINK_ERR_INVALID_STATE);
+    CHECK_TRUE(a.state == MCL_CONTACT_STATE_COMMITTING);
+
     /* A retransmits COMMIT. B has cleared its pending transaction, so the
      * ordinary path refuses it -- which is correct, and is exactly why the
      * retransmission case has to be asked separately. */
-    CHECK_STATUS(mcl_contact_commit_begin(&b), MCL_LINK_ERR_INVALID_STATE);
+    CHECK_STATUS(mcl_contact_commit_accept(&b, MIG_A, SESS),
+                 MCL_LINK_ERR_INVALID_STATE);
 
     CHECK_STATUS(mcl_contact_commit_repeat(&b, MIG_A, SESS, &reconfirm),
                  MCL_LINK_OK);
@@ -653,6 +788,8 @@ int main(void)
     test_repeated_migration();
     test_lost_confirm_recovers_by_retransmission();
     test_commit_repeat_is_narrow();
+    test_commit_is_irrevocable_once_sent();
+    test_commit_accept_never_enters_committing();
     test_observer_is_indistinguishable();
 
     printf("mcl_link_contact: %d checks passed\n", g_checks);

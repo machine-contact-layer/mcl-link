@@ -75,13 +75,41 @@ static void mcl_contact_clear(mcl_contact_t *contact)
 }
 
 /* True while a migration transaction is outstanding at any stage. */
-static int mcl_contact_migration_in_progress(const mcl_contact_t *contact)
+/*
+ * States a migration can still be abandoned from.
+ *
+ * COMMITTING is deliberately absent. In every state below it, no COMMIT has
+ * been sent, so the peer cannot have switched and rolling back describes only
+ * this machine. Once COMMIT is out, whether the peer committed is unknowable,
+ * and abandoning would assert otherwise. See mcl_contact_abandon_migration.
+ */
+static int mcl_contact_migration_is_revocable(const mcl_contact_t *contact)
 {
     return contact->state == MCL_CONTACT_STATE_OFFERED ||
            contact->state == MCL_CONTACT_STATE_AGREED ||
            contact->state == MCL_CONTACT_STATE_VALIDATING ||
-           contact->state == MCL_CONTACT_STATE_VALIDATED ||
-           contact->state == MCL_CONTACT_STATE_COMMITTING;
+           contact->state == MCL_CONTACT_STATE_VALIDATED;
+}
+
+/* Shared tail of both commit completions: adopt the candidate transport and
+ * remember the transaction so a retransmitted COMMIT can still be answered. */
+static void mcl_contact_settle_commit(
+    mcl_contact_t *contact,
+    uint32_t migration_ref)
+{
+    contact->active_transport = contact->pending_transport;
+    contact->completed_migration_ref = migration_ref;
+    mcl_contact_clear_pending(contact);
+    contact->state = MCL_CONTACT_STATE_ACTIVE;
+
+    /*
+     * Saturate rather than wrap. A wrapped counter would silently report a
+     * long-lived contact as a fresh one, and this value exists precisely to
+     * make repeated migration visible to policy and diagnostics.
+     */
+    if (contact->migration_count < 0xFFFFu) {
+        contact->migration_count = (uint16_t)(contact->migration_count + 1u);
+    }
 }
 
 /*
@@ -388,25 +416,43 @@ mcl_link_status_t mcl_contact_commit_confirm(
         return status;
     }
 
-    contact->active_transport = contact->pending_transport;
-    /*
-     * Remembered before the pending transaction is cleared. A peer whose
-     * CONFIRM was lost will retransmit COMMIT, and without this the contact
-     * would have no way to recognise the transaction it had just finished.
-     * See mcl_contact_commit_repeat.
-     */
-    contact->completed_migration_ref = migration_ref;
-    mcl_contact_clear_pending(contact);
-    contact->state = MCL_CONTACT_STATE_ACTIVE;
+    mcl_contact_settle_commit(contact, migration_ref);
+    return MCL_LINK_OK;
+}
+
+mcl_link_status_t mcl_contact_commit_accept(
+    mcl_contact_t *contact,
+    uint32_t migration_ref,
+    uint32_t session_ref)
+{
+    mcl_link_status_t status;
+
+    if (contact == NULL) {
+        return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+    if (contact->state != MCL_CONTACT_STATE_VALIDATED) {
+        /* Accepting a commit for a path this machine has not validated is the
+         * defect the state machine exists to prevent. */
+        return MCL_LINK_ERR_INVALID_STATE;
+    }
 
     /*
-     * Saturate rather than wrap. A wrapped counter would silently report a
-     * long-lived contact as a fresh one, and this value exists precisely to
-     * make repeated migration visible to policy and diagnostics.
+     * Checked before anything moves, so a commit naming another transaction
+     * leaves the contact in VALIDATED with the old transport intact rather
+     * than stranded partway through a switch it then refused.
      */
-    if (contact->migration_count < 0xFFFFu) {
-        contact->migration_count = (uint16_t)(contact->migration_count + 1u);
+    status = mcl_contact_check_transaction(contact, migration_ref, session_ref);
+    if (status != MCL_LINK_OK) {
+        return status;
     }
+
+    /*
+     * One step from VALIDATED to ACTIVE, never passing through COMMITTING.
+     * That keeps COMMITTING meaning exactly one thing -- "I sent COMMIT and do
+     * not know whether it arrived" -- which is what makes it safe to forbid
+     * rollback there.
+     */
+    mcl_contact_settle_commit(contact, migration_ref);
     return MCL_LINK_OK;
 }
 
@@ -452,7 +498,13 @@ mcl_link_status_t mcl_contact_abandon_migration(mcl_contact_t *contact)
     if (contact == NULL) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
     }
-    if (mcl_contact_migration_in_progress(contact) == 0) {
+    if (mcl_contact_migration_is_revocable(contact) == 0) {
+        /*
+         * From COMMITTING this is refused on purpose. The peer may already be
+         * on the new transport, and "I did not hear CONFIRM" does not mean "the
+         * peer did not commit". The caller retransmits COMMIT, or closes the
+         * contact. See the note on this function in contact.h.
+         */
         return MCL_LINK_ERR_INVALID_STATE;
     }
 

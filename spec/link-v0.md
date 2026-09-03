@@ -185,13 +185,17 @@ Working classes:
 - `HANDOFF` — payload defined by [link-handoff-control-v0.1.md](link-handoff-control-v0.1.md)
 - `CLOSE`
 
-Of these, only `HANDOFF` currently has a defined payload contract. The rest
-carry either a canonical Wire object (`CONTACT`, `DATA`, `CAPABILITY`,
-`NEGOTIATION`) or nothing yet specified. **Before a stable Link major, every
-assigned class must have a defined payload and behaviour, an explicitly empty
-payload contract, or be reserved.** A class that is accepted by the decoder but
-whose payload nobody has specified is an interoperability failure waiting for
-its first independent implementation.
+Each class's payload and behaviour is decided in
+[link-frame-classes-v0.1.md](link-frame-classes-v0.1.md), which applies the
+rule that **every assigned class must have a defined payload and behaviour, an
+explicitly empty payload contract, or be reserved.** A class the decoder accepts
+but whose payload nobody has specified is an interoperability failure waiting
+for its first independent implementation.
+
+`payload` is **not** "canonical Wire bytes" in general. The class selects which
+contract the payload follows: `CONTACT` and `DATA` carry a Wire object,
+`HANDOFF` carries a Link handoff control, `ACK`/`NACK`/`CLOSE` carry their own
+Link controls, `KEEPALIVE` carries nothing, and `ADAPT` is reserved.
 
 ## 5. Addressing
 
