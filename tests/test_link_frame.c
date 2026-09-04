@@ -208,10 +208,49 @@ static void test_reject_unknown_version(void)
     tx.payload_len = (uint16_t)sizeof(k_presence);
     (void)mcl_link_frame_encode(&tx, buf, sizeof(buf), &written);
 
-    buf[0] = (uint8_t)(0x10u | MCL_LINK_CLASS_DATA);  /* major 1 */
+    /*
+     * Major 1 is CUT and is accepted. This assertion used to be its opposite;
+     * inverted rather than deleted, because the frame is byte-identical at
+     * both majors and a reader needs to see that stated somewhere.
+     */
+    buf[0] = (uint8_t)((MCL_LINK_STABLE_MAJOR << 4u) | MCL_LINK_CLASS_DATA);
+    CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed) == MCL_LINK_OK,
+          "the Stable major is accepted");
+    CHECK(rx.link_major == MCL_LINK_STABLE_MAJOR,
+          "and the decoder reports which major it arrived under");
+
+    /* Major 2 is unassigned and must still be refused. */
+    buf[0] = (uint8_t)((2u << 4u) | MCL_LINK_CLASS_DATA);
     CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed)
               == MCL_LINK_ERR_INCOMPATIBLE_VERSION,
-          "major 1 rejected as incompatible");
+          "an unassigned major is rejected as incompatible");
+
+    /* Encoding at the Stable major differs from major 0 in the nibble and in
+     * nothing else -- that is what "the layout did not change" means. */
+    {
+        uint8_t stable_buf[128];
+        size_t stable_written = 0u;
+        size_t i;
+        CHECK(mcl_link_frame_encode_at_major(MCL_LINK_STABLE_MAJOR, &tx,
+                                             stable_buf, sizeof(stable_buf),
+                                             &stable_written) == MCL_LINK_OK,
+              "a frame encodes at the Stable major");
+        CHECK(stable_written == written, "to the same length");
+        CHECK(stable_buf[0] ==
+                  (uint8_t)((MCL_LINK_STABLE_MAJOR << 4u) |
+                            MCL_LINK_CLASS_DATA),
+              "with the Stable major in the nibble");
+        (void)mcl_link_frame_encode(&tx, buf, sizeof(buf), &written);
+        for (i = 1u; i < written; ++i) {
+            CHECK(stable_buf[i] == buf[i],
+                  "and every other byte identical to major 0");
+        }
+        CHECK(mcl_link_frame_encode_at_major(2u, &tx, stable_buf,
+                                             sizeof(stable_buf),
+                                             &stable_written)
+                  == MCL_LINK_ERR_INCOMPATIBLE_VERSION,
+              "an unassigned major cannot be emitted");
+    }
 }
 
 static void test_reject_unknown_class(void)
@@ -333,10 +372,11 @@ static void test_malformed_is_not_truncation(void)
           "reserved flag bit is a range error, not truncation");
 
     buf[1] = 0u;
-    buf[0] = (uint8_t)((1u << 4u) | MCL_LINK_CLASS_DATA);
+    /* Major 2, not 1: major 1 is cut and accepted now. */
+    buf[0] = (uint8_t)((2u << 4u) | MCL_LINK_CLASS_DATA);
     CHECK(mcl_link_frame_decode(buf, written, &rx, &consumed)
               == MCL_LINK_ERR_INCOMPATIBLE_VERSION,
-          "future major version is reported as a version failure");
+          "an unassigned major is reported as a version failure");
 }
 
 static void test_integrity_detects_corruption(void)

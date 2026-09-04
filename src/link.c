@@ -420,11 +420,32 @@ mcl_link_status_t mcl_link_frame_encode(
     size_t out_capacity,
     size_t *written)
 {
+    /*
+     * The experimental major, for source compatibility. A caller written before
+     * major 1 was cut compiles unchanged and emits exactly the bytes it emitted
+     * before. A caller that wants the Stable major asks for it by name.
+     */
+    return mcl_link_frame_encode_at_major(MCL_LINK_FRAME_MAJOR, frame, out,
+                                          out_capacity, written);
+}
+
+mcl_link_status_t mcl_link_frame_encode_at_major(
+    uint8_t major,
+    const mcl_link_frame_t *frame,
+    uint8_t *out,
+    size_t out_capacity,
+    size_t *written)
+{
     size_t need;
     size_t pos = 0u;
 
     if (frame == NULL || out == NULL || written == NULL) {
         return MCL_LINK_ERR_INVALID_ARGUMENT;
+    }
+    if (major != MCL_LINK_FRAME_MAJOR && major != MCL_LINK_STABLE_MAJOR) {
+        /* Unassigned. Refused rather than emitted and left for a peer to
+         * puzzle over. */
+        return MCL_LINK_ERR_INCOMPATIBLE_VERSION;
     }
     if (mcl_link_frame_encodable(frame) == 0u) {
         return MCL_LINK_ERR_RANGE;
@@ -435,7 +456,7 @@ mcl_link_status_t mcl_link_frame_encode(
         return MCL_LINK_ERR_RANGE;
     }
 
-    out[pos++] = (uint8_t)(((uint32_t)MCL_LINK_FRAME_MAJOR << 4u)
+    out[pos++] = (uint8_t)(((uint32_t)major << 4u)
                            | (uint32_t)frame->frame_class);
     out[pos++] = frame->flags;
 
@@ -493,9 +514,22 @@ mcl_link_status_t mcl_link_frame_decode(
     }
 
     major = (uint8_t)((in[0] >> 4u) & 0x0Fu);
-    if (major != (uint8_t)MCL_LINK_FRAME_MAJOR) {
+    if (major != (uint8_t)MCL_LINK_FRAME_MAJOR &&
+        major != (uint8_t)MCL_LINK_STABLE_MAJOR) {
+        /*
+         * Major 1 is CUT. The frame layout is byte-identical to major 0 -- the
+         * major bump exists because the project's own version policy reserves
+         * major 0 for pre-standard work, so publishing a Stable Link on it
+         * would contradict the policy, not because any byte moved.
+         *
+         * What differs at major 1 is the CLASS DISPOSITIONS, which
+         * link-class-disposition-v1.md freezes: nine Stable, ADAPT reserved.
+         * Those are enforced below for both majors, because they were already
+         * true at major 0.
+         */
         return MCL_LINK_ERR_INCOMPATIBLE_VERSION;
     }
+    frame->link_major = major;
 
     frame->frame_class = (mcl_link_frame_class_t)(in[0] & 0x0Fu);
     if (frame->frame_class >= MCL_LINK_CLASS_COUNT) {

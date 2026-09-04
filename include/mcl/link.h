@@ -164,6 +164,21 @@ uint8_t mcl_link_context_key_equals(
  * ============================================================ */
 
 #define MCL_LINK_FRAME_MAJOR        0u
+
+/*
+ * The first Stable Link major.
+ *
+ * The frame LAYOUT is byte-identical to major 0. The bump exists because the
+ * project's version policy reserves major 0 for pre-standard work, so
+ * publishing a Stable Link on it would contradict the policy -- not because
+ * any byte moved.
+ *
+ * What major 1 freezes is the CLASS DISPOSITIONS in
+ * spec/link-class-disposition-v1.md: nine Stable classes, ADAPT permanently
+ * reserved and refused, CAPABILITY and NEGOTIATION carrying Link control
+ * payloads rather than Wire objects.
+ */
+#define MCL_LINK_STABLE_MAJOR       1u
 #define MCL_LINK_FRAME_MIN_SIZE     8u
 #define MCL_LINK_FRAME_MAX_PAYLOAD  1024u
 
@@ -209,6 +224,12 @@ enum {
 #define MCL_LINK_FLAG_RESERVED    0xE0u
 
 typedef struct {
+    /*
+     * Set by the decoder to the major the frame arrived under. Ignored by
+     * mcl_link_frame_encode, which always emits MCL_LINK_FRAME_MAJOR; use
+     * mcl_link_frame_encode_at_major to choose.
+     */
+    uint8_t link_major;
     mcl_link_frame_class_t frame_class;
     uint8_t flags;
     uint32_t source_ref;
@@ -247,6 +268,23 @@ size_t mcl_link_frame_encoded_size(const mcl_link_frame_t *frame);
  * Encode a frame. The caller owns the output buffer; no allocation occurs.
  * Writes the frame check when MCL_LINK_FLAG_FRAME_CHECK is set.
  */
+/*
+ * Encode at a specific Link major.
+ *
+ * mcl_link_frame_encode() is this function at MCL_LINK_FRAME_MAJOR, kept so
+ * that callers written before major 1 was cut compile unchanged AND emit the
+ * same bytes they emitted before. v1.0 promises source compatibility, and
+ * silently moving an existing call to a new major would break it invisibly.
+ *
+ * The two majors produce byte-identical frames apart from the version nibble.
+ */
+mcl_link_status_t mcl_link_frame_encode_at_major(
+    uint8_t major,
+    const mcl_link_frame_t *frame,
+    uint8_t *out,
+    size_t out_capacity,
+    size_t *written);
+
 mcl_link_status_t mcl_link_frame_encode(
     const mcl_link_frame_t *frame,
     uint8_t *out,
