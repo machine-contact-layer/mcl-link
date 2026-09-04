@@ -37,6 +37,17 @@ if(MCL_LINK_BUILD_TESTS)
         C_EXTENSIONS NO)
     add_test(NAME mcl_link_contact COMMAND mcl_link_test_contact)
 
+    # What an attacker achieves. SECURITY.md lists both the weaknesses v1.0
+    # ships with and the things that would be defects; this exercises the
+    # second list so it is not left as prose nobody has run.
+    add_executable(mcl_link_test_adversarial tests/test_adversarial.c)
+    target_link_libraries(mcl_link_test_adversarial PRIVATE mcl_link)
+    set_target_properties(mcl_link_test_adversarial PROPERTIES
+        C_STANDARD 99
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO)
+    add_test(NAME mcl_link_adversarial COMMAND mcl_link_test_adversarial)
+
     add_executable(mcl_link_test_rendezvous tests/test_rendezvous.c)
     target_link_libraries(mcl_link_test_rendezvous PRIVATE mcl_link)
     set_target_properties(mcl_link_test_rendezvous PROPERTIES
