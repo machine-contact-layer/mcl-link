@@ -149,9 +149,14 @@ and does not change.
   behaviour that exists and is tested. Resolving §3 did change one thing in the
   SDK: `CAPABILITY` and `NEGOTIATION` are no longer passed to the Tier-0
   decoder, because they now carry Link control payloads.
-- **It does not cut Link major 1.** That is `V1_SCOPE.md` §5.8, and it happens
-  after the meanings close.
+- **It does not cut Link major 1.** That is `V1_SCOPE.md` §5.8, and it happened
+  after the meanings closed. **Closed 2026-09-04:** major 1 is cut, and what it
+  freezes is this document's dispositions — the frame layout is byte-identical
+  to major 0.
 - **It does not settle `frame_check`.** The per-profile `frame_check`
-  requirement still has nowhere normative to live until §5.6 freezes the two
-  transport profiles. That is a profile gap, not a class gap, and it is tracked
-  there.
+  requirement had nowhere normative to live until §5.6 froze the two transport
+  profiles. That was a profile gap, not a class gap, and it was tracked there.
+  **Closed 2026-09-04:** both profile specifications are Stable and each
+  *requires* the flag — IP because the UDP checksum is optional over IPv4 and
+  weak, BLE because a frame crosses up to 56 individually-correct PDUs and a
+  mis-spliced fragment corrupts a frame no link-layer CRC can catch.

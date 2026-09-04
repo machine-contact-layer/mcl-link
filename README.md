@@ -123,6 +123,19 @@ Two decisions worth knowing before reading the spec:
 
 ## Status
 
-Private research repository. Pre-v0.1 candidate specification.
+**Link major 1 is cut and is part of MCL v1.0.** What major 1 freezes is the
+class dispositions in
+[`spec/link-class-disposition-v1.md`](spec/link-class-disposition-v1.md) — nine
+Stable frame classes, `ADAPT` permanently reserved and refused — not the frame
+layout, which is byte-identical to major 0. The bump exists because the
+project's version policy reserves major 0 for pre-standard work.
 
-See [`spec/link-v0.md`](spec/link-v0.md).
+`mcl_link_frame_encode` still emits major 0, because v1.0 promises source
+compatibility and silently moving an existing call to a new major would break
+it invisibly. Use `mcl_link_frame_encode_at_major` to choose.
+
+Everything else in this repository is below Stable and is not a basis for an
+implementation. [`spec/link-v0.md`](spec/link-v0.md) is a Research Draft;
+[`spec/link-negotiation-v1.md`](spec/link-negotiation-v1.md) is Candidate.
+`mcl-core/SPECIFICATION_INDEX.md` is the per-document answer, generated from
+the tree rather than written by hand.

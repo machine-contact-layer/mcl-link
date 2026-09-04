@@ -1,6 +1,6 @@
 {
- "registry_version": "0.1-draft",
- "status": "provisional",
+ "registry_version": "1.0",
+ "status": "active",
  "purpose": "Assigned values for the 8-bit transport_id field used by TRANSPORT_CAPABILITY, TRANSPORT_OFFER, TRANSPORT_ACCEPT, CHANNEL_STATE and by Link contact migration. Two independent implementations cannot complete a transport change without agreeing on these values, which is why they are registered rather than left to convention.",
  "field_width_bits": 8,
  "field_width_reference": "mcl-wire/research/field-width-review-v0.2.md",
@@ -24,18 +24,24 @@
   {
    "id": 2,
    "name": "MCL_IP",
-   "status": "provisional",
+   "status": "stable",
    "owner_repo": "mcl-ip",
    "family": "internet_protocol",
-   "detail": "IP carriage over any underlying link, Wi-Fi and Ethernet alike. Datagram carriage maps one frame per datagram; stream carriage is length-prefixed. The underlying link technology is deliberately not part of the identifier."
+   "detail": "IP carriage over any underlying link, Wi-Fi and Ethernet alike. Datagram carriage maps one frame per datagram; stream carriage is length-prefixed. The underlying link technology is deliberately not part of the identifier.",
+   "normative_specification": "mcl-ip/spec/ip-datagram-profile-v1.md",
+   "specification_status": "Stable",
+   "specification_note": "Stable. Line 4 of that specification names transport_id = 2 normatively, so the assignment lives in a Stable document and not in reference-implementation behaviour."
   },
   {
    "id": 3,
    "name": "MCL_BLE",
-   "status": "provisional",
+   "status": "stable",
    "owner_repo": "mcl-ble",
    "family": "bluetooth_low_energy",
-   "detail": "Bluetooth Low Energy, connectionless advertising or connected GATT carriage."
+   "detail": "Bluetooth Low Energy, connectionless advertising or connected GATT carriage.",
+   "normative_specification": "mcl-ble/spec/ble-gatt-profile-v1.md",
+   "specification_status": "Stable",
+   "specification_note": "Stable. Line 4 of that specification names transport_id = 3 normatively, so the assignment lives in a Stable document and not in reference-implementation behaviour."
   },
   {
    "id": 4,
@@ -53,7 +59,8 @@
   "A transport_id names a transport FAMILY, not a profile, radio, frequency or data rate, so that a family assignment never has to be revisited when its physical parameters change. Architecture Charter 2.8.",
   "A transport_id says nothing about security. A family that typically offers link encryption is not thereby an authenticated peer. Architecture Charter 2.11.",
   "An implementation receiving an unassigned transport_id MUST NOT guess. It rejects the offer and may continue on its current transport.",
-  "AUTHORITATIVE SOURCE. Do not infer assignments from conformance-vector provenance. mcl-wire/conformance/vectors/tier0-v0.1.json borrowed source_ref and endpoint_token from research corpus scenario S14, which describes a BLE handoff, while encoding transport_id 2 = MCL_IP. The vector bytes are correct; the borrowed values are not an assignment. This registry and the binding headers agree and are authoritative. mcl-link/tests/test_transport_registry_binding.c pins that agreement so it cannot drift again."
+  "AUTHORITATIVE SOURCE. Do not infer assignments from conformance-vector provenance. mcl-wire/conformance/vectors/tier0-v0.1.json borrowed source_ref and endpoint_token from research corpus scenario S14, which describes a BLE handoff, while encoding transport_id 2 = MCL_IP. The vector bytes are correct; the borrowed values are not an assignment. This registry and the binding headers agree and are authoritative. mcl-link/tools/validate_transport_registry.c pins that agreement so it cannot drift again.",
+  "Status vocabulary: \"stable\" means frozen -- the value and its meaning do not change without a new registry generation -- and \"provisional\" means assigned for use but not frozen. A row may only be \"stable\" if it cites a normative specification whose own status is Stable, and validate_transport_registry.c enforces that rather than trusting the word."
  ],
  "governance": {
   "change_controller": "The MCL maintainer (the owner of the eight MCL repositories).",
@@ -62,5 +69,25 @@
   "review": "GOVERNANCE.md 4.2",
   "promotion": "GOVERNANCE.md 4.3 -- an Experimental Use value is NEVER relabelled Stable. Promotion assigns a NEW value in the Standards Action range after an independent implementation has interoperated using the experimental one, and re-runs conformance evidence on the final assigned bytes.",
   "deprecation": "GOVERNANCE.md 4.4 -- a retired assignment becomes a permanent tombstone. Its value is never reused and a decoder must refuse it, because a peer that once meant something by that value would otherwise be misread rather than refused."
+ },
+ "standards_action_records": {
+  "assigned": "2026-09-04",
+  "policy": "MCL Standards Action (mcl-core/governance/REGISTRY_POLICY.md section 2)",
+  "change_controller": "The MCL maintainer, per GOVERNANCE.md section 4.",
+  "why_this_was_required": "A Stable profile scoped to a provisional transport identifier is incoherent. profile_id is transport-scoped: IP-DATAGRAM = 1 means nothing without transport_id = 2 being fixed, because profile 1 under a different transport is an unrelated assignment. The two profile promotions of 2026-09-04 therefore could not stand while the identifiers they are scoped to were still marked provisional, and the v1.0 compatibility matrix already described transports 2 and 3 as Stable. The matrix was right about the intent and the registry was the authoritative source, so the registry is what changed.",
+  "values_assigned": [
+   2,
+   3
+  ],
+  "values_NOT_assigned": "transport_id 1 (MCL_AP) and 4 (MCL_UWB) stay provisional. AP-B0 is not selected and no UWB hardware has been run, so neither has the evidence this record required of IP and BLE. They occupy Standards Action values because they were allocated before this policy was applied and are in use in retained evidence; provisional status is what says they are not frozen.",
+  "requirements": {
+   "mcl_specification_change": "mcl-ip/spec/ip-datagram-profile-v1.md and mcl-ble/spec/ble-gatt-profile-v1.md are Stable and each names its transport_id normatively. The identifier is part of a Stable specification rather than a parameter of the reference implementation.",
+   "architecture_review": "A transport_id names a transport FAMILY, not a profile, radio, frequency or data rate (Architecture Charter 2.8), so freezing 2 and 3 commits to nothing physical and never has to be revisited when a radio changes. It adds no field and changes no Core semantics. It says nothing about security (Charter 2.11).",
+   "conformance_implications_documented": "transport_id travels inside TRANSPORT_CAPABILITY, TRANSPORT_OFFER, TRANSPORT_ACCEPT and CHANNEL_STATE, so these are bytes under test. C4 already carries transport_id 2 in the major-1 TRANSPORT_OFFER/TRANSPORT_ACCEPT cases and C5 carries 2 and 3 in the profile carriage cases. No byte changes as a result of this record: the values were already the ones under test, and what changed is that the registry now says they are frozen. test_profiles_c5.py reads this file and fails if either row stops being stable, or if transport 1 or 4 is quietly promoted alongside them.",
+   "collision_redundancy_review": "Both values were already uniquely assigned here and the validator refuses duplicate ids, names and owner repositories. 0 is reserved so an unset field selects no binding. Nothing is duplicated and nothing is displaced.",
+   "permanent_specification": "mcl-ip/spec/ip-datagram-profile-v1.md and mcl-ble/spec/ble-gatt-profile-v1.md."
+  },
+  "over_air_evidence": "mcl-ip/evidence/e4-udp-2g4-20260902/ and mcl-ble/evidence/e4-ble-gatt-20260902/ carried these transports between physically distinct devices in both directions, and mcl-sdk/evidence/e4-dual-transport-migration-20260903/ moved one continuing contact across them 104 times. That is transport evidence about the carriage. It is not a conformance pass and it is not what freezes the identifier; the specifications are.",
+  "what_this_is_not": "Not a claim that two organisations have interoperated on these values, and not a claim that anyone outside this project has reviewed them. See mcl-core/governance/V1_SCOPE.md section 5.9."
  }
 }

@@ -15,6 +15,8 @@ typedef struct {
     char name[MAX_STR_LEN];
     char status[MAX_STR_LEN];
     char owner_repo[MAX_STR_LEN];
+    char normative_specification[MAX_STR_LEN];
+    char specification_status[MAX_STR_LEN];
 } transport_assignment_t;
 
 static const char *skip_ws(const char *p, const char *end)
@@ -152,7 +154,16 @@ int main(int argc, char **argv)
             } else if (strcmp(key, "owner_repo") == 0) {
                 p = parse_string(p, end, a.owner_repo, sizeof(a.owner_repo));
                 if (!p) return 1;
-            } else if (strcmp(key, "family") == 0 || strcmp(key, "detail") == 0) {
+            } else if (strcmp(key, "normative_specification") == 0) {
+                p = parse_string(p, end, a.normative_specification,
+                                 sizeof(a.normative_specification));
+                if (!p) return 1;
+            } else if (strcmp(key, "specification_status") == 0) {
+                p = parse_string(p, end, a.specification_status,
+                                 sizeof(a.specification_status));
+                if (!p) return 1;
+            } else if (strcmp(key, "family") == 0 || strcmp(key, "detail") == 0 ||
+                       strcmp(key, "specification_note") == 0) {
                 /*
                  * Descriptive metadata. Parsed so that a malformed value is
                  * still caught, then discarded: it carries no assignment.
@@ -219,6 +230,44 @@ int main(int argc, char **argv)
                 fprintf(stderr, "Duplicate transport owner: %s\n", assignments[i].owner_repo);
                 return 1;
             }
+        }
+
+        /*
+         * Status vocabulary, and what "stable" costs.
+         *
+         * A registry row is where an implementer looks to learn whether a
+         * value is safe to freeze into a product. "stable" written by hand is
+         * worth nothing; what makes it worth something is that it cannot be
+         * written without the specification behind it, so the two cannot drift
+         * apart the way the compatibility matrix and this file already did
+         * once. profile_id is transport-scoped, so a Stable profile under a
+         * provisional transport identifier is an incoherent pair -- that is
+         * the defect this check exists to make impossible to reintroduce.
+         */
+        if (strcmp(assignments[i].status, "stable") != 0 &&
+            strcmp(assignments[i].status, "provisional") != 0) {
+            fprintf(stderr, "Transport %d: unknown status '%s' (expected "
+                            "\"stable\" or \"provisional\")\n",
+                    assignments[i].id, assignments[i].status);
+            return 1;
+        }
+        if (strcmp(assignments[i].status, "stable") == 0) {
+            if (assignments[i].normative_specification[0] == '\0') {
+                fprintf(stderr, "Transport %d is stable but cites no "
+                                "normative_specification\n", assignments[i].id);
+                return 1;
+            }
+            if (strcmp(assignments[i].specification_status, "Stable") != 0) {
+                fprintf(stderr, "Transport %d is stable but its specification "
+                                "status is '%s', not Stable\n",
+                        assignments[i].id, assignments[i].specification_status);
+                return 1;
+            }
+        } else if (strcmp(assignments[i].specification_status, "Stable") == 0) {
+            fprintf(stderr, "Transport %d claims a Stable specification while "
+                            "the assignment itself is '%s'\n",
+                    assignments[i].id, assignments[i].status);
+            return 1;
         }
 
         /* Check specific bindings */
