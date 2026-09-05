@@ -1,6 +1,11 @@
 # MCL Link minimum capability and version negotiation v1
 
-Status: **Candidate**
+Status: **Stable**.
+
+Promoted 2026-09-06 under `mcl-core/governance/V1_SCOPE.md` §6 on 4241 checks
+plus the §5.9 independent-implementation evidence. A specification that says
+peers negotiate X while the document defining how to negotiate X is not itself
+normative is the one outcome §5.4 says cannot survive.
 Satisfies: `mcl-core/governance/V1_SCOPE.md` §5.4
 Frame classes: `CAPABILITY` (1) and `NEGOTIATION` (2)
 

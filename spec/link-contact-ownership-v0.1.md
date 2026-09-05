@@ -1,8 +1,8 @@
 # Link Lifecycle and Contact Continuity: Ownership v0.1
 
-**Status:** Research Draft
+**Status:** **Stable** for the contact lifecycle and the link/contact ownership rule -- that a migration may only be driven while the link lifecycle is ESTABLISHED or HANDOFF, and the link may not leave those states with a transaction outstanding. Promoted 2026-09-06 under `mcl-core/governance/V1_SCOPE.md` section 6; the SDK has enforced both halves in shipping code since the model was written.
 **Layer:** Link, with a requirement on the SDK
-**Applies to:** Link major 0, and the contract that must be settled before a stable Link major
+**Applies to:** Link major 1, the cut major. The contract this document called "the one that must be settled before a stable Link major" is settled: it is this one.
 
 This document decides which of two state machines owns what, because until now
 neither did and both were independently mutable.

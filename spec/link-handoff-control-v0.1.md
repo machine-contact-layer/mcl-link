@@ -1,6 +1,6 @@
 # MCL Link HANDOFF Control Payload v0.1
 
-**Status:** Research Draft
+**Status:** **Stable** for the migration control sequence -- offer, accept, challenge, response, commit, confirm -- and its idempotence and retransmission rules. Promoted 2026-09-06 under `mcl-core/governance/V1_SCOPE.md` section 6 on E4 over-air evidence: 104 migrations with both radios live on both peers.
 **Layer:** Link
 **Frame class:** `HANDOFF` (8)
 **Control version:** 0

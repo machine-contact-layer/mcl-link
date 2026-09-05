@@ -1,6 +1,12 @@
 # MCL Link v0
 
-Status: **Research Draft**
+Status: **Stable** for the Link frame canonical layout at major 1, which is
+byte-identical to major 0 and frozen. **Research Draft** for the parts
+describing behaviour that is specified normatively elsewhere — negotiation in
+`link-negotiation-v1.md`, class dispositions in `link-class-disposition-v1.md`,
+contact ownership in `link-contact-ownership-v0.1.md`.
+
+Promoted 2026-09-06 under `mcl-core/governance/V1_SCOPE.md` §6.
 
 ## 1. Objective
 

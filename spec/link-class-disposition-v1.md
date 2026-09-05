@@ -1,6 +1,10 @@
 # Link frame classes — disposition for Link major 1
 
-Status: **proposed**, satisfying `mcl-core/governance/V1_SCOPE.md` §5.3
+Status: **Stable**, satisfying `mcl-core/governance/V1_SCOPE.md` §5.3.
+
+Promoted 2026-09-06 under §6. "Proposed" was the status this document carried
+while `V1_SCOPE.md` §4 already listed the frame classes as Stable per class and
+the decoder already enforced those dispositions in shipping code.
 Date: 2026-09-04
 
 ## 1. What this document decides
