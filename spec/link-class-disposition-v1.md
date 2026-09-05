@@ -133,7 +133,8 @@ refused. A refused value is a permanent tombstone, which is what
 ## 5. What a conforming major-1 decoder does
 
 ```text
-frame_class > 9                  -> reject, MCL_LINK_ERR_RANGE
+frame_class unassigned, or
+  assigned but not negotiated    -> reject, MCL_LINK_ERR_RANGE
 frame_class is Reserved          -> reject, never guessed
 frame_class is Stable            -> decode per its frozen contract
 reserved flag bit set            -> reject
@@ -160,3 +161,54 @@ and does not change.
   *requires* the flag — IP because the UDP checksum is optional over IPv4 and
   weak, BLE because a frame crosses up to 56 individually-correct PDUs and a
   mis-spliced fragment corrupts a frame no link-layer CRC can catch.
+
+## 6. What Link major 1 freezes, and what it does not
+
+The rule in §5 was first written as `frame_class > 9 -> reject`. That phrasing
+described today's assignments correctly and, as a side effect, closed the whole
+4-bit namespace — deciding the fate of values 10–15 without anyone choosing to.
+Those are two different statements and the tree contained both:
+
+```text
+the MEANINGS of assigned values are frozen        <- what major 1 freezes
+the remaining namespace is forever closed          <- what the phrasing implied
+```
+
+**Major 1 freezes the assigned meanings. It does not close the namespace.**
+
+The basis is `mcl-core/governance/ARCHITECTURE_CHARTER.md` §4, which says
+compatible evolution should prefer registry additions and new optional
+extensions, and that *"minor document revisions, new assigned values, errata,
+and compatible optional behavior do not consume a major wire version"*.
+Assigning a never-used value is a new assigned value. It reinterprets no
+existing canonical bytes, which is the thing §4 says **does** require a new
+major.
+
+A new class is legal at Link major 1 only when all four hold:
+
+1. it is assigned in `registries/frame-classes-v0.1.json` by MCL Standards
+   Action, with a permanent specification reference;
+2. its use is gated by a **negotiated feature bit**, so a peer that has not
+   advertised support never receives it;
+3. no existing class changes meaning, payload contract or disposition;
+4. a decoder that has not negotiated the feature refuses it exactly as it
+   refuses any unassigned value.
+
+Condition 2 is what makes this safe rather than merely convenient, and it costs
+no new mechanism. `link-negotiation-v1.md` §6 selects features by
+`L.features & P.features`, so a bit a peer does not know is a bit it did not
+set and the `AND` clears it. A v1.0 implementation advertises nothing, the
+intersection is empty, and a peer holding a new class **must not** send it.
+Fail-closed is arithmetic here, not a rule an implementer has to remember.
+
+The restated §5 rule is **identical in behaviour** for every implementation
+that exists today. Nothing decodes differently; the namespace simply stops
+being closed by accident.
+
+`ADAPT` = 7 is unaffected and stays a permanent tombstone. A reserved value is
+not an unassigned one, and §4 above is why.
+
+**No value in 10–15 is assigned by this revision.** A `SECURITY` class is under
+design in `research/security-carrier-design.md` and deliberately spends nothing:
+the namespace holds six values and can never grow, and assigning one to a
+mechanism that might still change shape is how registries acquire tombstones.

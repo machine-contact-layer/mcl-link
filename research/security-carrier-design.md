@@ -84,6 +84,44 @@ each other. That is the finding that opened row 35.
 Assign **class 10, `SECURITY`**, and make it legal between two peers **only when
 both have advertised a feature bit for it** in `CAPABILITY`.
 
+#### First: this was not obviously legal, and the first draft of this section assumed it was
+
+`spec/link-class-disposition-v1.md` §5 stated a normative rule of Link major 1:
+
+```text
+frame_class > 9   ->   reject, MCL_LINK_ERR_RANGE
+```
+
+Read literally, that closes the namespace and makes class 10 illegal at major 1
+outright — so the arithmetic argument below, however sound, would have been
+building on a rule it contradicted. **Justifying an addition by how neatly it
+fails closed is not the same as establishing that governance permits it**, and
+the two were conflated here before this paragraph existed.
+
+The reconciliation is now written down rather than assumed. `ARCHITECTURE_CHARTER.md`
+§4 states that *"new assigned values, errata, and compatible optional behavior
+do not consume a major wire version"*, and that it is *incompatible
+reinterpretation of existing canonical bytes* that requires a new major.
+Assigning a never-used value is the former, not the latter.
+
+So §5's phrasing described today's assignments and closed the namespace as a
+side effect. It has been restated as "unassigned, or assigned but not
+negotiated → reject" — **identical behaviour for every implementation that
+exists** — and `spec/link-class-disposition-v1.md` §6 now records the four
+conditions a new class must meet. `registries/frame-classes-v0.1.json` is
+created to hold the namespace, because it did not exist while values 0–9 were
+being assigned.
+
+That the disposition specification is still `proposed` rather than Stable is
+what made this cheap. After promotion it would have been an erratum against a
+frozen document.
+
+**No value is assigned.** Six remain in a namespace that can never grow, and
+spending one on a mechanism that might still change shape is how registries
+acquire tombstones.
+
+#### Why the mechanism is right, given that it is permitted
+
 This is the mechanism the project already built and deliberately left empty.
 `link-negotiation-v1.md` §6 assigns zero feature bits and states that the field
 has defined behaviour for every possible value on day one, because the selection
@@ -155,6 +193,56 @@ and compact exchanges rather than transporting credentials whole.
 carries no `SECURITY` class by construction. Authentication happens after
 migration, on the richer bearer. That is the intended architecture and this
 carrier does not disturb it.
+
+### 4.4 It must bind the contact, not the connection
+
+This is the requirement most likely to be got wrong, because the obvious thing
+to bind is the thing in front of you.
+
+`MCL-S1` must establish that **the peer speaking on the richer bearer is the
+same cryptographic peer with which this MCL contact is being secured.** If the
+security context is bound to an IP address, a UDP port, a BLE address or an
+acoustic carrier, then migration — the property that makes MCL a contact layer
+rather than a message format — breaks the security model the moment it is
+exercised. A contact that survives a change of medium cannot rest on a context
+that does not.
+
+So the external context is drawn from the transport-independent contact:
+protocol identifier, Wire major, Link major, security profile identifier, both
+contact correlation references, `session_ref` where established, the negotiated
+capability context, and the transcript role. It excludes every address,
+endpoint and bearer parameter that a migration is allowed to change.
+
+**Which fields exactly is not settled here.** They must be derived from the
+contact model in `spec/link-contact-ownership-v0.1.md` and from an attack
+analysis against `research/secure-contact-threat-model.md` — not copied from a
+sketch. What is settled is the rule the derivation has to satisfy: *nothing that
+migration may change may appear in the context.*
+
+### 4.5 It must not add states to the link lifecycle
+
+The temptation is a ladder:
+
+```text
+ESTABLISHED -> AUTHENTICATED -> TRUSTED -> AUTHORIZED
+```
+
+`ARCHITECTURE_CHARTER.md` forbids exactly this collapse, and `mcl-core/README.md`
+states the separation as `reception != identity != authenticity != authority !=
+trust != obligation`. Three independent state machines, and they stay
+independent:
+
+```text
+communication state    the Link lifecycle, unchanged by this design
+security state         NONE / IN_PROGRESS / PROPERTIES_ESTABLISHED
+local authorisation    the deployment's policy, never MCL's
+```
+
+"Properties established" is deliberately not "trusted". A completed handshake
+proves a cryptographic property. Whether that property *means* anything is a
+trust question the deployment answers with its own anchors, and whether it
+*permits* anything is an authorisation question the machine answers with its own
+policy. `MCL-S1` may deliver the first and must not claim the other two.
 
 ## 5. What is not decided here
 

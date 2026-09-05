@@ -1,0 +1,49 @@
+{
+ "registry_version": "0.1-draft",
+ "status": "provisional",
+ "purpose": "Assigned values for the 4-bit frame_class field of the MCL Link frame. This registry did not exist while values 0-9 were being assigned; it is created so that the namespace has one authority rather than a table inside a specification, and so that the 10-15 range has a stated allocation policy instead of being either silently free or silently closed.",
+ "field_width_bits": 4,
+ "field_width_reference": "mcl-link/spec/link-v0.md section 3.1 -- link_major occupies the high nibble of the first byte and frame_class the low nibble, so the namespace is exactly 16 values and can never be widened without a new frame layout.",
+ "allocation_policy": {
+  "0x0_0x9": "Assigned. Dispositioned for Link major 1 by mcl-link/spec/link-class-disposition-v1.md.",
+  "0xA_0xF": "Unassigned. MCL Standards Action. A value here is REFUSED by every decoder until it is both assigned in this registry and enabled by a negotiated feature bit -- see compatible_addition below."
+ },
+ "assignments": [
+  { "value": 0, "name": "CONTACT", "disposition": "stable", "contract": "Canonical Wire Tier-0 object." },
+  { "value": 1, "name": "CAPABILITY", "disposition": "stable", "contract": "Link capability control, 9 bytes. mcl-link/spec/link-negotiation-v1.md." },
+  { "value": 2, "name": "NEGOTIATION", "disposition": "stable", "contract": "Link negotiation control, 7 bytes. Same specification." },
+  { "value": 3, "name": "DATA", "disposition": "stable", "contract": "Canonical Wire Tier-0 object. Decodes identically to CONTACT; the distinction is intent." },
+  { "value": 4, "name": "ACK", "disposition": "stable", "contract": "Fixed 4-byte control. Correlation by acked_sequence." },
+  { "value": 5, "name": "NACK", "disposition": "stable", "contract": "Fixed 4-byte control, same layout, carries a reason." },
+  { "value": 6, "name": "KEEPALIVE", "disposition": "stable-optional-to-emit", "contract": "Empty payload. A receiver MUST accept one; nothing requires an implementation to send them." },
+  { "value": 7, "name": "ADAPT", "disposition": "reserved", "contract": "PERMANENT TOMBSTONE. MUST be refused on receipt, MUST NOT be emitted, and MUST NEVER be reassigned. Assigned for transport adaptation; nothing was built on it. Excluding it rather than reserving it would invite value 7 to mean something else later, and a peer that once meant 'adapt' by 7 would then be misread rather than refused." },
+  { "value": 8, "name": "HANDOFF", "disposition": "stable", "contract": "mcl-link/spec/link-handoff-control-v0.1.md." },
+  { "value": 9, "name": "CLOSE", "disposition": "stable", "contract": "Link CLOSE control." }
+ ],
+ "compatible_addition": {
+  "question": "Does Link major 1 freeze the MEANINGS of the assigned values, or does it close the whole 4-bit namespace? Those are not the same statement, and the tree said both.",
+  "resolution": "It freezes the assigned meanings. The namespace stays open under the conditions below.",
+  "basis": "mcl-core/governance/ARCHITECTURE_CHARTER.md section 4 states that compatible evolution should prefer registry additions and new optional extensions, and that 'minor document revisions, new assigned values, errata, and compatible optional behavior do not consume a major wire version'. Assigning an unused value is a new assigned value; it reinterprets no existing canonical bytes, which is the thing section 4 says DOES require a new major.",
+  "conditions": [
+   "The value is assigned here by MCL Standards Action, with a permanent specification reference.",
+   "Its use is gated by a negotiated feature bit, so a peer that has not advertised support never receives the class. The selection in mcl-link/spec/link-negotiation-v1.md section 6 is L.features & P.features, so a bit a peer does not know is a bit it did not set, and the AND clears it. Fail-closed is arithmetic here, not a rule anyone has to remember.",
+   "No existing class changes meaning, payload contract, or disposition.",
+   "A decoder that has not negotiated the feature refuses the class exactly as it refuses any unassigned value -- unchanged major-1 behaviour, and no frame that means one thing today comes to mean another."
+  ],
+  "consequence_for_the_disposition_spec": "link-class-disposition-v1.md section 5 stated the decoder rule as 'frame_class > 9 -> reject'. That phrasing closes the namespace as a side effect of describing today's assignments. It is restated as 'frame_class not assigned, or assigned but not negotiated -> reject', which is IDENTICAL behaviour for every implementation that exists, and does not decide the 10-15 range by accident.",
+  "not_yet_assigned": "No value in 0xA-0xF is assigned by this revision. A SECURITY class is under design in mcl-link/research/security-carrier-design.md and deliberately spends no value: assigning one to a mechanism that might still change shape is how registries acquire tombstones."
+ },
+ "notes": [
+  "The namespace is 16 values and cannot grow. Six remain. That scarcity is the reason this registry exists and the reason assignments are Standards Action only.",
+  "A reserved value is never reused. ADAPT is the worked example and REGISTRY_POLICY.md requires the same of every retired assignment.",
+  "This registry records assignments. It does not itself make class 10 legal; that needs an assignment plus a negotiated feature bit plus a specification."
+ ],
+ "governance": {
+  "change_controller": "The MCL maintainer (the owner of the eight MCL repositories).",
+  "procedures": "mcl-core/governance/GOVERNANCE.md section 4 defines application, review, promotion and deprecation for every MCL registry. They are defined once there rather than restated per registry, so they cannot drift apart.",
+  "application": "GOVERNANCE.md 4.1 -- an issue naming the registry, requested value, meaning, a permanent specification reference, the negotiated feature bit that gates it, and the failure behaviour required of a receiver that does not implement it. An application without a specification reference is not an application.",
+  "review": "GOVERNANCE.md 4.2",
+  "promotion": "GOVERNANCE.md 4.3 -- an Experimental Use value is NEVER relabelled Stable. This registry defines no Experimental Use range: the namespace is 16 values wide and cannot afford one, so every assignment is Standards Action and experimentation happens on a transport profile instead.",
+  "deprecation": "GOVERNANCE.md 4.4 -- a retired assignment becomes a permanent tombstone. Its value is never reused and a decoder must refuse it, because a peer that once meant something by that value would otherwise be misread rather than refused."
+ }
+}

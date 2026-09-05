@@ -246,11 +246,25 @@ typedef struct {
      * has the wrong layering model:
      *
      *   CONTACT, DATA          a canonical Wire semantic object
-     *   CAPABILITY, NEGOTIATION  a Wire object today; own contracts pending
+     *   CAPABILITY             Link capability control, 9 bytes
+     *                          (spec/link-negotiation-v1.md)
+     *   NEGOTIATION            Link negotiation control, 7 bytes, same spec
      *   HANDOFF                a canonical Link handoff control (mcl/handoff.h)
-     *   ACK, NACK, KEEPALIVE,
-     *   ADAPT, CLOSE           no payload contract defined yet; see
-     *                          spec/link-v0.md section 4
+     *   ACK, NACK              fixed 4-byte controls; NACK carries a reason
+     *   KEEPALIVE              empty payload; MUST be accepted, need never be
+     *                          emitted
+     *   CLOSE                  Link CLOSE control
+     *   ADAPT                  RESERVED. Refused on receipt, never emitted,
+     *                          never reassigned
+     *
+     * The authority for this table is registries/frame-classes-v0.1.json and
+     * spec/link-class-disposition-v1.md, not this comment. It said "a Wire
+     * object today; own contracts pending" for CAPABILITY and NEGOTIATION, and
+     * "no payload contract defined yet" for ACK, NACK, KEEPALIVE, ADAPT and
+     * CLOSE, long after all seven acquired frozen contracts -- so the header a
+     * builder actually reads disagreed with the normative table on six of ten
+     * classes. Drift in this direction is invisible to every gate that checks
+     * documents against documents.
      *
      * A payload may only be interpreted under the contract its class names.
      * Reading one class's payload under another's rules gives one set of bytes
