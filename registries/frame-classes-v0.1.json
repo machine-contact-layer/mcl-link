@@ -6,7 +6,7 @@
  "field_width_reference": "mcl-link/spec/link-v0.md section 3.1 -- link_major occupies the high nibble of the first byte and frame_class the low nibble, so the namespace is exactly 16 values and can never be widened without a new frame layout.",
  "allocation_policy": {
   "0x0_0x9": "Assigned. Dispositioned for Link major 1 by mcl-link/spec/link-class-disposition-v1.md.",
-  "0xA_0xF": "Unassigned. MCL Standards Action. A value here is REFUSED by every decoder until it is both assigned in this registry and enabled by a negotiated feature bit -- see compatible_addition below."
+  "0xA_0xF": "Unassigned. MCL Standards Action. A value here is refused structurally by any implementation that does not know the assignment. An implementation that DOES know it decodes the frame structurally and then refuses to act on it unless the contact negotiated its feature -- the two refusals happen at different layers, see two_layer_refusal below."
  },
  "assignments": [
   { "value": 0, "name": "CONTACT", "disposition": "stable", "contract": "Canonical Wire Tier-0 object." },
@@ -26,12 +26,19 @@
   "basis": "mcl-core/governance/ARCHITECTURE_CHARTER.md section 4 states that compatible evolution should prefer registry additions and new optional extensions, and that 'minor document revisions, new assigned values, errata, and compatible optional behavior do not consume a major wire version'. Assigning an unused value is a new assigned value; it reinterprets no existing canonical bytes, which is the thing section 4 says DOES require a new major.",
   "conditions": [
    "The value is assigned here by MCL Standards Action, with a permanent specification reference.",
-   "Its use is gated by a negotiated feature bit, so a peer that has not advertised support never receives the class. The selection in mcl-link/spec/link-negotiation-v1.md section 6 is L.features & P.features, so a bit a peer does not know is a bit it did not set, and the AND clears it. Fail-closed is arithmetic here, not a rule anyone has to remember.",
+   "Its use is gated by a negotiated feature bit, so a peer that has not advertised support never receives the class. The selection in mcl-link/spec/link-negotiation-v1.md section 6 is L.features & P.features, so a bit a peer does not know is a bit it did not set, and the AND clears it. Fail-closed is arithmetic here, not a rule anyone has to remember. The bit is enforced at the CONTACT layer, never inside the structural decoder -- see two_layer_refusal.",
    "No existing class changes meaning, payload contract, or disposition.",
-   "A decoder that has not negotiated the feature refuses the class exactly as it refuses any unassigned value -- unchanged major-1 behaviour, and no frame that means one thing today comes to mean another."
+   "An implementation that has not negotiated the feature does not act on the class. An implementation predating the assignment refuses it structurally, as an unassigned value; one that knows the assignment decodes it structurally and declines it at the contact layer. Unchanged major-1 behaviour either way, and no frame that means one thing today comes to mean another."
   ],
   "consequence_for_the_disposition_spec": "link-class-disposition-v1.md section 5 stated the decoder rule as 'frame_class > 9 -> reject'. That phrasing closes the namespace as a side effect of describing today's assignments. It is restated as 'frame_class not assigned, or assigned but not negotiated -> reject', which is IDENTICAL behaviour for every implementation that exists, and does not decide the 10-15 range by accident.",
   "not_yet_assigned": "No value in 0xA-0xF is assigned by this revision. A SECURITY class is under design in mcl-link/research/security-carrier-design.md and deliberately spends no value: assigning one to a mechanism that might still change shape is how registries acquire tombstones."
+ },
+ "two_layer_refusal": {
+  "problem": "An earlier revision of this registry said a newly assigned class is 'refused when assigned but not negotiated'. That is the right outcome and the wrong place. mcl_link_frame_decode() is deliberately a STATELESS structural decoder: it receives bytes and an output structure, and holds no contact, no negotiated feature set and no security state. Making it enforce a per-contact feature bit would push contact state into the codec to satisfy one rule, and that separation is worth more than the rule.",
+  "structural_decoding": "Is this class assigned at all, and is the frame structurally valid? Answered by the codec, from bytes alone. An implementation that does not know an assignment refuses it here -- which is exactly how a v1.0 implementation refuses a class added after it shipped.",
+  "contact_admissibility": "Did THIS contact negotiate the feature that enables this class, and is the class legal at this point in the contact? Answered by the contact layer, which is where the negotiated feature set already lives.",
+  "consequence": "The two questions have different answers for the same bytes depending on who is asking, and that is correct. A security-capable implementation structurally decodes an assigned SECURITY frame and then declines to deliver it to the security engine if the feature was never negotiated. An implementation that predates the assignment never gets that far: it refuses structurally, because to it the value is simply unassigned. Both refuse; neither needs the other's state.",
+  "rule": "A class assignment MUST NOT require the structural decoder to consult contact state. If enforcing a new class would need per-contact state inside mcl_link_frame_decode(), the assignment is shaped wrongly."
  },
  "notes": [
   "The namespace is 16 values and cannot grow. Six remain. That scarcity is the reason this registry exists and the reason assignments are Standards Action only.",

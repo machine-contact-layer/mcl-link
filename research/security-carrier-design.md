@@ -176,6 +176,14 @@ negotiation produces a failed authentication rather than a silent downgrade.
 This is a hard requirement on suite selection, not a preference. A suite with no
 transcript-binding facility cannot be `MCL-S1`.
 
+**And it is only half the defence.** Transcript binding detects alteration of an
+exchange that *proceeds*; it cannot detect an attacker who clears the security
+feature bit in both directions, because then no handshake occurs and there is no
+transcript to bind. The other half is a policy floor supplied by the deployment
+profile: where `MCL-S1` is required, failing to negotiate it is a security
+requirement failure and MUST NOT silently continue unsecured.
+`mcl-s1-benchmark-design.md` §1 states both halves.
+
 ### 4.2 It must fit, or say how it segments
 
 One `SECURITY` frame carries at most 1024 payload bytes, minus the profile
@@ -246,9 +254,16 @@ policy. `MCL-S1` may deliver the first and must not claim the other two.
 
 ## 5. What is not decided here
 
-- **No suite.** EDHOC, COSE and the alternatives are benchmarked separately, on
-  message size, code size, credential-reference support, replay and downgrade
-  properties. No primitive is invented.
+- **No suite.** Candidates are benchmarked in `mcl-s1-benchmark-design.md`. Note
+  the taxonomy correction recorded there: **EDHOC uses COSE**, so they were never
+  alternatives to one another. The comparison is EDHOC+COSE against Noise against
+  DTLS 1.3 + Connection ID, with OSCORE as prior art rather than a candidate. No
+  primitive is invented.
+- **What protects traffic after the handshake.** The carrier moves handshake
+  bytes; it does not by itself protect `HANDOFF`, `DATA` or the control classes,
+  and a mechanism that authenticates the peer once and leaves migration controls
+  forgeable has not secured the contact. Three protected-record shapes are
+  measured in `mcl-s1-benchmark-design.md` §2.1.
 - **No feature-bit value and no class assignment.** Both are Standards Action
   and neither is spent before a suite exists. Spending a value on a mechanism
   that might change shape is how registries acquire tombstones.

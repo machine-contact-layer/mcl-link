@@ -132,6 +132,24 @@ refused. A refused value is a permanent tombstone, which is what
 
 ## 5. What a conforming major-1 decoder does
 
+The first row is a statement about an implementation, not about one function.
+It is enforced at **two different layers**, and conflating them would push
+contact state into the codec:
+
+```text
+structural decode      is the class assigned, and is the frame well formed?
+                       answered from bytes alone by mcl_link_frame_decode(),
+                       which holds no contact and no negotiated feature set
+contact admissibility  did THIS contact negotiate the feature that enables
+                       the class? answered by the contact layer, where the
+                       negotiated feature set already lives
+```
+
+An implementation predating an assignment refuses structurally — to it the
+value is simply unassigned. One that knows the assignment decodes structurally
+and declines at the contact layer. Both refuse; neither needs the other's
+state, and `mcl_link_frame_decode()` stays stateless.
+
 ```text
 frame_class unassigned, or
   assigned but not negotiated    -> reject, MCL_LINK_ERR_RANGE
