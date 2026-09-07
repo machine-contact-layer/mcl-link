@@ -1,5 +1,5 @@
-#ifndef MCL_RENDEZVOUS_H
-#define MCL_RENDEZVOUS_H
+#ifndef MCL_ENDPOINT_RENDEZVOUS_H
+#define MCL_ENDPOINT_RENDEZVOUS_H
 
 #include "mcl/link.h"
 
@@ -121,4 +121,4 @@ uint8_t mcl_rendezvous_beacon_matches(
 }
 #endif
 
-#endif /* MCL_RENDEZVOUS_H */
+#endif /* MCL_ENDPOINT_RENDEZVOUS_H */

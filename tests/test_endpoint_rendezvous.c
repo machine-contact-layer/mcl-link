@@ -8,7 +8,7 @@
  * all.
  */
 
-#include "mcl/rendezvous.h"
+#include "mcl/endpoint_rendezvous.h"
 #include "mcl/contact.h"
 
 #include <stdio.h>

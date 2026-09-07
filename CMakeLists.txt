@@ -8,7 +8,7 @@ option(MCL_LINK_BUILD_TESTS "Build host-side reference tests" ON)
 add_library(mcl_link STATIC
     src/link.c
     src/contact.c
-    src/rendezvous.c
+    src/endpoint_rendezvous.c
     src/handoff.c
     src/control.c
     src/negotiation.c)
@@ -48,13 +48,13 @@ if(MCL_LINK_BUILD_TESTS)
         C_EXTENSIONS NO)
     add_test(NAME mcl_link_adversarial COMMAND mcl_link_test_adversarial)
 
-    add_executable(mcl_link_test_rendezvous tests/test_rendezvous.c)
-    target_link_libraries(mcl_link_test_rendezvous PRIVATE mcl_link)
-    set_target_properties(mcl_link_test_rendezvous PROPERTIES
+    add_executable(mcl_link_test_endpoint_rendezvous tests/test_endpoint_rendezvous.c)
+    target_link_libraries(mcl_link_test_endpoint_rendezvous PRIVATE mcl_link)
+    set_target_properties(mcl_link_test_endpoint_rendezvous PROPERTIES
         C_STANDARD 99
         C_STANDARD_REQUIRED YES
         C_EXTENSIONS NO)
-    add_test(NAME mcl_link_rendezvous COMMAND mcl_link_test_rendezvous)
+    add_test(NAME mcl_link_endpoint_rendezvous COMMAND mcl_link_test_endpoint_rendezvous)
 
     add_executable(mcl_link_test_control tests/test_control.c)
     target_link_libraries(mcl_link_test_control PRIVATE mcl_link)

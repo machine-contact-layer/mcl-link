@@ -375,7 +375,7 @@ Handoff does not imply trust. Local policy decides whether to accept a transport
 old transport   TRANSPORT_OFFER   ->   Wire semantic object
                 TRANSPORT_ACCEPT  <-   Wire semantic object
 
-candidate       rendezvous beacon      mcl/rendezvous.h
+candidate       rendezvous beacon      mcl/endpoint_rendezvous.h
                 PATH_CHALLENGE    ->   HANDOFF control, operation 1
                 PATH_RESPONSE     <-   HANDOFF control, operation 2
                 COMMIT            ->   HANDOFF control, operation 3

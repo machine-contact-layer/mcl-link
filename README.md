@@ -102,7 +102,7 @@ this Link's own change of transport and means nothing outside it.
 - [`conformance/vectors/handoff-v0.1.json`](conformance/vectors/handoff-v0.1.json)
   — positive and negative vectors
 - [`include/mcl/handoff.h`](include/mcl/handoff.h) — the codec
-- [`include/mcl/rendezvous.h`](include/mcl/rendezvous.h) — resolving the
+- [`include/mcl/endpoint_rendezvous.h`](include/mcl/endpoint_rendezvous.h) — resolving the
   `endpoint_token` to a real endpoint on the candidate transport
 
 Until this existed the four controls were local function calls, and the sequence
