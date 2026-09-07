@@ -111,8 +111,31 @@ u8   payload[payload_len]
 u32  frame_check (CRC-32/IEEE)        if FLAG_FRAME_CHECK (0x10)
 ```
 
-Minimum frame size is 8 bytes plus payload. `link_major` is 0 for this draft.
-Flag bits 5..7 are reserved.
+Minimum frame size is 8 bytes plus payload. Flag bits 5..7 are reserved.
+
+**`link_major` is 0 or 1, and the two are byte-identical.**
+
+```text
+0   the pre-standard major. Still accepted, still emitted by
+    mcl_link_frame_encode() for source compatibility.
+1   THE STABLE MAJOR. Cut 2026-09-04. Not one byte of the layout above
+    moved: the major exists because the project's version policy reserves
+    major 0 for pre-standard work, and what differs is the CLASS
+    DISPOSITIONS frozen in `link-class-disposition-v1.md`.
+```
+
+A conforming decoder **MUST** accept both and **MUST** refuse any other value as
+an incompatible version. An implementation that accepts only major 0 cannot
+receive a Stable frame at all.
+
+> **This sentence used to read "`link_major` is 0 for this draft", and it cost
+> something.** The clean-room implementation in
+> `mcl-core/conformance/independent/` was written from this document, took that
+> sentence at its word, and refused every major-1 frame. No cross-implementation
+> case had ever carried one, so the Stable Link major had never been decoded by
+> anything but the reference. That is what a stale sentence in a normative
+> layout section does, and it is why the caveat is recorded here rather than
+> quietly corrected.
 
 `payload_len` MUST NOT exceed 1024, so the largest frame this version can
 produce is 1048 bytes: 8 mandatory, 16 of optional fields when every flag is
