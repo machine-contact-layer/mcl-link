@@ -1,6 +1,46 @@
-# MCL Link
+<p align="center">
+  <img src=".github/banner.png" alt="OJOBIT" width="100%">
+</p>
 
-`mcl-link` defines contact establishment, framing, sessions, addressing, quality-of-service, negotiation, and adaptation for the Machine Contact Layer.
+<h1 align="center">MCL Link</h1>
+
+<p align="center"><strong>Keeping one contact alive — through framing, sessions, and a change of transport.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/machine-contact-layer/mcl-link/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/machine-contact-layer/mcl-link/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/machine-contact-layer/mcl-link/blob/main/LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <img alt="Link major 1" src="https://img.shields.io/badge/link%20major-1%20Stable-brightgreen">
+  <img alt="C99 freestanding" src="https://img.shields.io/badge/C99-freestanding-informational">
+</p>
+
+<p align="center">
+  <a href="https://github.com/machine-contact-layer/mcl-sdk"><b>Use the SDK instead</b></a> ·
+  <a href="https://github.com/machine-contact-layer/mcl-core"><b>Specifications</b></a> ·
+  <a href="https://github.com/machine-contact-layer/mcl-wire"><b>mcl-wire</b></a>
+</p>
+
+---
+
+> ### Most people should start with the SDK, not here
+>
+> This repository is a **specification**. If you are building a product, you
+> want [**mcl-sdk**](https://github.com/machine-contact-layer/mcl-sdk) — one CMake project, no sibling checkout, and a
+> working example you can run in about a minute. Come back here when you need
+> to know exactly what a byte means, or when you are writing an independent
+> implementation.
+
+## Why this exists
+
+A contact that dies when the radio changes is not a contact. MCL Link is what
+survives the change: framing, session identity, negotiation, refusal, and
+migration from one transport to another without starting over.
+
+This is the layer every binding maps onto, which is why a `HAZARD` means the
+same thing over a loudspeaker and over UDP. In one campaign a single logical
+contact was preserved across **104 physical-medium changes**, including 100
+alternating BLE/IP migrations.
+
+**Link major 1 is Stable.**
 
 It is transport-profile neutral. MCL-AP, MCL-IP, MCL-BLE, MCL-UWB, and future bindings implement the same link/session contract through different physical transports.
 
