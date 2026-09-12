@@ -134,8 +134,10 @@ project's version policy reserves major 0 for pre-standard work.
 compatibility and silently moving an existing call to a new major would break
 it invisibly. Use `mcl_link_frame_encode_at_major` to choose.
 
-Everything else in this repository is below Stable and is not a basis for an
-implementation. [`spec/link-v0.md`](spec/link-v0.md) is a Research Draft;
-[`spec/link-negotiation-v1.md`](spec/link-negotiation-v1.md) is Candidate.
+Other documents in this repository have their own explicit dispositions.
+[`spec/link-v0.md`](spec/link-v0.md),
+[`spec/link-negotiation-v1.md`](spec/link-negotiation-v1.md), and the contact
+ownership and handoff-control specifications are Stable for their stated
+major-1 scope; research documents remain below Stable.
 `mcl-core/SPECIFICATION_INDEX.md` is the per-document answer, generated from
 the tree rather than written by hand.

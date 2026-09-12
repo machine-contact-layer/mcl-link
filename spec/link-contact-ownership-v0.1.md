@@ -163,4 +163,6 @@ Still open:
   caller walks the lifecycle by hand. When those exist, the lifecycle becomes
   driven and this document's invariant is where they connect.
 
-No part of this has crossed a radio.
+The ownership rule has been exercised in the retained physical migration
+campaigns. That evidence does not turn the Candidate Stranger-Contact profiles
+into Stable profiles, and public review remains a separate Stable-release gate.

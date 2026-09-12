@@ -33,7 +33,7 @@ Facts, read rather than assumed:
 | `features` is a `uint16` bitmask, **zero bits assigned**, unknown bits fail closed by `AND` | same, §6 |
 | Link payload ceiling is 1024, frame ceiling 1048 | `include/mcl/link.h` |
 | Wire major 1 carries exactly three Tier-0 kinds | `V1_SCOPE.md` §3.2 |
-| The Wire extension envelope is Stable with an empty assignment table; blocks cap at 256 bytes | `mcl-wire/include/mcl/extension.h` |
+| The Wire extension envelope is Candidate/Experimental with an empty assignment table; blocks cap at 256 bytes | `mcl-wire/include/mcl/extension.h` |
 | Security state is held separately from Link state | `ARCHITECTURE_CHARTER.md` |
 
 ## 3. The candidates
@@ -51,7 +51,7 @@ kind of announcement.
 
 ### 3.2 A Wire extension block on a Tier-0 object — rejected
 
-Ride the Stable extension envelope, which is the one mechanism that can add
+Ride the Candidate extension envelope, which is the mechanism that can add
 bytes inside major 1 without a version change.
 
 **It would work and it is still wrong.** It attaches security state to a
