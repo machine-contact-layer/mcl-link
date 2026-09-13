@@ -23,11 +23,11 @@
 
 > ### Most people should start with the SDK, not here
 >
-> This repository is a **specification**. If you are building a product, you
-> want [**mcl-sdk**](https://github.com/machine-contact-layer/mcl-sdk) — one CMake project, no sibling checkout, and a
-> working example you can run in about a minute. Come back here when you need
-> to know exactly what a byte means, or when you are writing an independent
-> implementation.
+> This repository is a **specification**. If you are building a product, start
+> with [**mcl-sdk**](https://github.com/machine-contact-layer/mcl-sdk): its quickstart runs two machines making
+> contact, and the release ships a self-contained developer SDK — one CMake
+> project, no sibling checkout. Come back here when you need to know exactly
+> what a byte means, or when you are writing an independent implementation.
 
 ## Why this exists
 
@@ -36,11 +36,13 @@ survives the change: framing, session identity, negotiation, refusal, and
 migration from one transport to another without starting over.
 
 This is the layer every binding maps onto, which is why a `HAZARD` means the
-same thing over a loudspeaker and over UDP. In one campaign a single logical
+same thing over a loudspeaker and over UDP. In one physical campaign a single logical
 contact was preserved across **104 physical-medium changes**, including 100
 alternating BLE/IP migrations.
 
-**Link major 1 is Stable.**
+**Link major 1 is Stable.** That migration campaign carried major-0 traffic;
+Wire 1 inside Link 1 is evidenced separately, decoded over air on an embedded
+target.
 
 It is transport-profile neutral. MCL-AP, MCL-IP, MCL-BLE, MCL-UWB, and future bindings implement the same link/session contract through different physical transports.
 
